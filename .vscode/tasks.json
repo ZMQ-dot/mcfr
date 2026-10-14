@@ -1,0 +1,20 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "启动 mcfr 服务",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["run.py"],
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "检查数据库状态",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["run.py", "--check"],
+      "problemMatcher": []
+    }
+  ]
+}

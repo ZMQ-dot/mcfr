@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- ！viewport-fit=cover 是给刘海屏用的：不写它，CSS 里的 env(safe-area-inset-*)
+     永远返回 0，mobile.css 里那一整节安全区适配会静默失效（不报错，只是没生效）。 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title data-i18n="mcfr · 找到你的 MC 伙伴">mcfr · 找到你的 MC 伙伴</title>
+<meta name="description" content="mcfr —— 面向中小学生《我的世界》玩家的安全、纯净交友平台，联系方式受控交换">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%2386c168'/><stop offset='.52' stop-color='%236ba84f'/><stop offset='1' stop-color='%234d7f38'/></linearGradient></defs><rect x='3' y='3' width='26' height='26' rx='4' fill='url(%23g)'/><rect x='10' y='11' width='4' height='4' fill='%231e2328'/><rect x='18' y='11' width='4' height='4' fill='%231e2328'/></svg>">
+<!-- ！资源路径一律用【绝对路径】（以 / 开头）。
+     帖子详情 /posts/2 是两段路径，相对路径会被解析成 /posts/js/app.js，
+     整页 404 白屏。单段路由（/me、/discover）拼出来恰好是对的，
+     所以这个坑只在深层路由上才露出来 —— 改回相对路径前请先想清楚这件事。 -->
+<link rel="stylesheet" href="/css/aether.css?v=0.32.1">
+<link rel="stylesheet" href="/css/app.css?v=0.32.1">
+<link rel="stylesheet" href="/css/minecraft.css?v=0.32.1">
+<!-- ！必须排在最后：mobile.css 整份都是覆盖层，排在前面会被上面的原值盖掉，
+     而且不会报错，只会出现「改了但没效果」。 -->
+<link rel="stylesheet" href="/css/mobile.css?v=0.32.1">
+
+<!-- 移动端地址栏 / 状态栏的配色，由 js/theme.js 在切主题时改写 -->
+<meta name="theme-color" content="#eef1ee">
+
+<!-- 主题防闪烁：必须在任何样式生效之前定下 data-theme。
+     放到 body 末尾（或者任何 defer 脚本里）都会晚一步 —— 那时首屏已经用浅色画完了，
+     深色系统的用户会先看到一下白闪，再整页刷地变黑。
+     这里是外部同步脚本而不是内联脚本，原因写在 js/theme-boot.js 开头：
+     内联脚本会逼着 CSP 放行 'unsafe-inline'，代价太大。 -->
+<script src="/js/theme-boot.js?v=0.32.1"></script>
+</head>
+<body>
+
+<canvas id="ion-canvas" aria-hidden="true"></canvas>
+
+<!-- ===================== 登录 / 注册 ===================== -->
+<section id="auth-screen" class="auth">
+  <!-- 登录前也要能切主题与语言：不跟系统的人，不该被逼着看完登录页才知道有这件事。
+       position: fixed 会脱离文档流，所以它们不会占掉 .auth 网格的一格。 -->
+  <button class="theme-toggle theme-toggle--float" data-theme-toggle type="button"></button>
+  <div class="lang-switch lang-switch--float" data-lang-switch
+       role="group" aria-label="语言 / Language"></div>
+
+  <div class="brand-block">
+    <div class="brand-mark">
+      <span class="brand-cube"></span>
+      <span data-i18n="mcfr · Minecraft 同好匹配">mcfr · Minecraft 同好匹配</span>
+    </div>
+
+    <div class="brand-title">
+      <h1 class="display display-xl"
+          data-i18n-html="找到能<br>一起<span class=&quot;iris-text&quot;>造世界</span><br>的人">
+        找到能<br>
+        一起<span class="iris-text">造世界</span><br>
+        的人
+      </h1>
+      <span class="en">A safe little corner for Minecraft friends.</span>
+    </div>
+
+    <div class="iris-rule iris-rule--fade"></div>
+
+    <p class="lede" data-i18n="专为中小学生玩家打造的安全交友站：按玩法、版本和上线时间匹配同好。注册不需要邮箱，一句话就能开始；联系方式默认对所有人隐藏，只有你逐条同意，才会发送给想认识你的那个人。">
+      专为中小学生玩家打造的安全交友站：按玩法、版本和上线时间匹配同好。
+      注册不需要邮箱，一句话就能开始；联系方式默认对所有人隐藏，
+      只有你逐条同意，才会发送给想认识你的那个人。
+    </p>
+
+    <div class="brand-facts">
+      <div class="fact"><b id="fact-friends">0</b><span data-i18n="位同好在线">位同好在线</span></div>
+      <div class="fact"><b>0</b><span data-i18n="条站内私信与陌生骚扰">条站内私信与陌生骚扰</span></div>
+      <div class="fact"><b id="fact-achievements">—</b><span data-i18n="项成长成就">项成长成就</span></div>
+    </div>
+  </div>
+
+  <div class="auth-card panel edge">
+    <span class="orb"></span>
+
+    <div class="tab-switch" id="auth-tabs" role="tablist">
+      <button id="tab-login" role="tab" aria-selected="true" data-i18n="登录">登录</button>
+      <button id="tab-register" role="tab" aria-selected="false" data-i18n="注册">注册</button>
+    </div>
+
+    <div class="iris-rule iris-rule--pixel"></div>
+
+    <!-- 登录表单 -->
+    <form id="form-login" class="stack" autocomplete="on">
+      <label class="field">
+        <span data-i18n="用户名或邮箱">用户名或邮箱</span>
+        <input class="input" name="account" autocomplete="username"
+               data-i18n-placeholder="用户名，或自己填过的邮箱"
+               placeholder="用户名，或自己填过的邮箱">
+      </label>
+      <label class="field">
+        <span data-i18n="密码">密码</span>
+        <input class="input" name="password" type="password" autocomplete="current-password"
+               data-i18n-placeholder="注册时设置的密码"
+               placeholder="注册时设置的密码">
+      </label>
+
+      <div class="field">
+        <span data-i18n="人机验证">人机验证</span>
+        <div class="captcha-row">
+          <img class="captcha-img" id="captcha-login" data-purpose="login"
+               role="button" tabindex="0"
+               data-i18n-title="点一下换一张" title="点一下换一张"
+               data-i18n-alt="人机验证图片，点一下换一张"
+               alt="人机验证图片，点一下换一张">
+          <input class="input captcha-input" name="captcha_answer" required
+                 minlength="4" maxlength="4" autocomplete="off"
+                 autocapitalize="characters" spellcheck="false"
+                 data-i18n-placeholder="填图中的 4 个字符"
+                 placeholder="填图中的 4 个字符">
+        </div>
+        <p class="hint" data-i18n="看不清就点一下图片换一张，字母不分大小写。">看不清就点一下图片换一张，字母不分大小写。</p>
+      </div>
+
+      <p class="error-text hidden" id="login-error"></p>
+      <button class="btn btn-primary btn-block mc-grass" type="submit" data-i18n="进入 mcfr">进入 mcfr</button>
+      <div class="row-between wrap">
+        <p class="hint" data-i18n="每次登录都要过一次，用来挡住拿脚本撞密码的">每次登录都要过一次，用来挡住拿脚本撞密码的</p>
+        <button class="btn btn-ghost btn-sm" type="button" data-action="forgot-password"
+                data-i18n="忘记密码？">忘记密码？</button>
+      </div>
+    </form>
+
+    <!-- 注册表单（分两步，避免一次展示太多字段） -->
+    <form id="form-register" class="stack hidden" autocomplete="on">
+      <div class="step-bar">
+        <span class="step" data-step-dot="1" aria-current="true"><i>1</i><span data-i18n="账号信息">账号信息</span></span>
+        <span class="step-line"></span>
+        <span class="step" data-step-dot="2"><i>2</i><span data-i18n="个人资料">个人资料</span></span>
+      </div>
+
+      <!-- 第 1 步：账号 -->
+      <div class="step-pane" data-step="1">
+        <div class="form-grid">
+          <label class="field">
+            <span data-i18n="用户名">用户名</span>
+            <input class="input" name="username" required
+                   data-i18n-placeholder="4-16 位字母数字下划线"
+                   placeholder="4-16 位字母数字下划线">
+          </label>
+          <label class="field">
+            <span data-i18n="游戏昵称">游戏昵称</span>
+            <input class="input" name="nickname" required
+                   data-i18n-placeholder="别人怎么称呼你"
+                   placeholder="别人怎么称呼你">
+          </label>
+          <label class="field">
+            <span data-i18n="密码">密码</span>
+            <input class="input" name="password" type="password" required
+                   data-i18n-placeholder="6 位以上，不要使用真实生日"
+                   placeholder="6 位以上，不要使用真实生日">
+          </label>
+          <label class="field">
+            <span data-i18n="邮箱（选填）">邮箱（选填）</span>
+            <input class="input" name="email" type="email" autocomplete="email"
+                   data-i18n-placeholder="方便同学联系你，不填也可以"
+                   placeholder="方便同学联系你，不填也可以">
+          </label>
+          <div class="field span-2">
+            <span data-i18n="人机验证">人机验证</span>
+            <div class="captcha-row">
+              <img class="captcha-img" id="captcha-register" data-purpose="register"
+                   role="button" tabindex="0"
+                   data-i18n-title="点一下换一张" title="点一下换一张"
+                   data-i18n-alt="人机验证图片，点一下换一张"
+                   alt="人机验证图片，点一下换一张">
+              <input class="input captcha-input" name="captcha_answer" required
+                     minlength="4" maxlength="4" autocomplete="off"
+                     autocapitalize="characters" spellcheck="false"
+                     data-i18n-placeholder="填图中的 4 个字符"
+                     placeholder="填图中的 4 个字符">
+            </div>
+            <p class="hint" data-i18n="用来挡住批量注册的小号；看不清就点图片换一张。">用来挡住批量注册的小号；看不清就点图片换一张。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 第 2 步：资料 -->
+      <div class="step-pane hidden" data-step="2">
+        <div class="form-grid">
+          <label class="field">
+            <span data-i18n="游戏版本">游戏版本</span>
+            <select class="select" name="edition" id="reg-edition"></select>
+          </label>
+          <label class="field">
+            <span data-i18n="年龄">年龄</span>
+            <input class="input" type="number" name="age" id="reg-age"
+                   min="6" max="99" step="1" inputmode="numeric" required
+                   data-i18n-placeholder="填数字，例如 13" placeholder="填数字，例如 13">
+          </label>
+          <label class="field span-2">
+            <span data-i18n="生日（月 / 日）">生日（月 / 日）</span>
+            <div class="birth-row">
+              <select class="select" name="birth_month" id="reg-birth-month"
+                      data-i18n-aria-label="出生月份" aria-label="出生月份"></select>
+              <select class="select" name="birth_day" id="reg-birth-day"
+                      data-i18n-aria-label="出生日期" aria-label="出生日期"></select>
+            </div>
+          </label>
+          <label class="field span-2">
+            <span data-i18n="所在地区（可留空）">所在地区（可留空）</span>
+            <input class="input" name="region"
+                   data-i18n-placeholder="例如 江苏·南京" placeholder="例如 江苏·南京">
+          </label>
+        </div>
+
+        <div class="lock-note">
+          <span class="lock-note__icon" aria-hidden="true">🔒</span>
+          <span data-i18n="年龄和生日填过就不能再改了。它们决定你是未成年还是成年，也会用来匹配同好 —— 请认真填。">年龄和生日填过就不能再改了。它们决定你是未成年还是成年，也会用来匹配同好 —— 请认真填。</span>
+        </div>
+
+        <div class="field" style="margin-top:.9rem">
+          <span data-i18n="喜欢的玩法">喜欢的玩法</span>
+          <div class="chip-row" id="reg-styles"></div>
+        </div>
+
+        <div class="field" style="margin-top:.9rem">
+          <span data-i18n="常在线时段">常在线时段</span>
+          <div class="chip-row" id="reg-times"></div>
+        </div>
+
+        <div class="field" style="margin-top:.9rem">
+          <span data-i18n="想找什么样的伙伴">想找什么样的伙伴</span>
+          <div class="chip-row" id="reg-wants"></div>
+        </div>
+
+        <label class="field" style="margin-top:.9rem">
+          <span data-i18n="一句话介绍自己">一句话介绍自己</span>
+          <textarea class="textarea" name="bio" rows="2"
+            data-i18n-placeholder="例如：喜欢红石和自动农场，想找人一起开荒"
+            placeholder="例如：喜欢红石和自动农场，想找人一起开荒"></textarea>
+        </label>
+      </div>
+
+      <p class="auth-aside" id="reg-note"></p>
+      <p class="error-text hidden" id="register-error"></p>
+
+      <div class="step-actions">
+        <button class="btn btn-ghost hidden" type="button" data-action="reg-back"
+                data-i18n="上一步">上一步</button>
+        <button class="btn btn-primary btn-block" type="button" data-action="reg-next"
+                data-i18n="下一步">下一步</button>
+        <button class="btn btn-primary btn-block hidden" type="submit" id="reg-submit"
+                data-i18n="创建我的账号">创建我的账号</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ICP 备案号。工信部要求放在网站底部，并且必须能点进 beian.miit.gov.cn。
+       ！rel="noopener noreferrer" 是必须的，否则对方页面能通过 window.opener
+         反向操作本站。
+       定位交给 CSS 的绝对定位 —— .auth 是两列网格，把它当普通子元素塞进去
+       会占掉第三格，把布局顶歪。 -->
+  <p class="auth-filing">
+    <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">豫ICP备2026015409号</a>
+  </p>
+</section>
+
+<!-- ===================== 主应用 ===================== -->
+<div id="app-screen" class="hidden">
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="brand-cube"></span>
+      <span class="name">mcfr</span>
+      <span class="sub">Minecraft 同好匹配</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="lang-switch" data-lang-switch role="group" aria-label="语言 / Language"></div>
+    <button class="theme-toggle" data-theme-toggle type="button"></button>
+    <button class="btn btn-ghost btn-sm" id="btn-refresh" title="刷新数据">刷新</button>
+    <div class="me-chip" id="me-chip"></div>
+  </header>
+
+  <div class="shell">
+    <nav class="sidenav" id="sidenav" aria-label="主导航"></nav>
+    <main class="view" id="view"></main>
+  </div>
+
+  <!-- 意见反馈：固定在左下角。位置刻意避开侧栏导航的点击区域（见 app.css） -->
+  <button class="feedback-fab" id="feedback-fab" data-action="open-feedback"
+          data-i18n-title="意见反馈" title="意见反馈"
+          data-i18n-aria-label="意见反馈" aria-label="意见反馈">
+    <span class="feedback-fab__icon" aria-hidden="true">✎</span>
+    <span class="feedback-fab__text">反馈</span>
+  </button>
+</div>
+
+<div id="overlay-root"></div>
+<div class="toast-host" id="toast-host"></div>
+
+<script src="/js/i18n.js?v=0.32.1"></script>
+<script src="/js/locale.zh-Hant.js?v=0.32.1"></script>
+<script src="/js/locale.en.js?v=0.32.1"></script>
+<script src="/js/locale.ja.js?v=0.32.1"></script>
+<script src="/js/theme.js?v=0.32.1"></script>
+<script src="/js/effects.js?v=0.32.1"></script>
+<script src="/js/mcicons.js?v=0.32.1"></script>
+<script src="/js/skinview.js?v=0.32.1"></script>
+<!-- ！必须排在 app.js 前面：正文的渲染与序列化都在它里面，
+     app.js 一加载就要用到。 -->
+<script src="/js/richtext.js?v=0.32.1"></script>
+<script src="/js/api.js?v=0.32.1"></script>
+<script src="/js/app.js?v=0.32.1"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  mcfr · 站点地图 —— https://pccode.cn
+
+  ！这里刻意只有一条。
+
+  本站是 SPA：/discover、/partners、/me 这些路由在服务端返回的都是同一份
+  index.html，未登录的访客看到的全是登录页。把它们列进来，搜索引擎
+  会当成一批重复内容互相打架，反而稀释掉首页的权重。
+
+  所以只声明首页。其余路由走 X-Robots-Tag: noindex（见 backend/main.py）。
+
+  ！没有写 <lastmod>：那一项如果填的是「文件修改时间」而不是「内容真正变化的时间」，
+     会被搜索引擎当成不可靠信号直接忽略，不如不写。
+     同理也没写 <changefreq> 和 <priority> —— 主流搜索引擎都不看了。
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://pccode.cn/</loc>
+  </url>
+</urlset>

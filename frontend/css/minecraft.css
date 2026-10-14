@@ -1,0 +1,510 @@
+/* =========================================================================
+   Minecraft 元素层
+   -------------------------------------------------------------------------
+   站点原有的 MC 元素（32px 区块网格底纹、8px 像素底纹、像素虹彩带、
+   steps() 跳格骨架屏、像素方块脸 logo）都遵循同一条约定：
+
+       **只借「形」，不借「色」。**
+
+   方块、像素、格槽、四角选框、碎裂粒子 —— 这些是「形」；
+   草绿、泥土棕、钻石青、下界红 —— 这些是「色」。
+
+   ！v0.12 起底色从深哑光黑换成了云白（见 aether.css 的 :root），
+     所以本文件里凡是「浅色透明叠加」的写法都要反过来：
+     深色主题用 rgba(255,255,255,α) 去提亮，亮色主题必须用 rgba(30,35,40,α) 去压暗。
+     这个改了不会报错、也不会警告，只是那个效果静静地不见了。
+
+   主题色是草方块的绿（--grass-*，--iris 现在装的就是这三级绿），
+   所以下面出现的绿色是主题的一部分，不算破例。
+
+   真正的例外只有第 6 节「草方块按钮」：那个按钮的悬停态用了
+   **草绿 + 泥土棕**这组 MC 原生配色，因为「草方块」的全部辨识度就在
+   上绿下土这两个颜色上，抹掉颜色它就只是一块普通按钮了。
+   它被严格限制在「一个按钮的一次悬停」里，理由与边界都写在那一节的开头。
+
+   另有三条自律，用来「不破坏原有平衡」：
+     1. 不改变任何既有布局尺寸：栅格、间距、圆角、字号一律原样，
+        新增的盒子都撑在原有内容里，不会把版面顶开；
+     2. 只做静态装饰与瞬时反馈，不参与信息层级、不抢视觉焦点；
+     3. 全部遵守 prefers-reduced-motion（见文件末尾）。
+
+   加载顺序必须排在 app.css 之后，靠后者覆盖。
+   ========================================================================= */
+
+/* =========================================================================
+   1 · 经验条 —— MC 经验条的分格刻度、渐变与「经验球」滑块
+   -------------------------------------------------------------------------
+   三个特征，缺一不可：
+
+   1. **十格**。轨道上等分十格，格与格之间一道 1px 的缝。
+      ！缝的颜色是分主题的（--xp-seam）：
+        浅色主题里未填充部分是浅灰底，只有**白**缝能「只在填充段看得见」；
+        深色主题里轨道本来就比填充暗，缝得反过来说用暗色。
+        写错了不会报错，只是那个效果静静地消失。
+   2. **颜色从草绿走向金锭黄** —— 越接近下一等级，越偏向「奖励」的颜色。
+   3. **滑块是一颗经验球**（菱形宝石 + 一圈很淡的光晕），
+      中心正好落在填充条的末端。它必须是第一个被看到的元素，
+      所以整条轨道上只有它有光晕。
+   ========================================================================= */
+
+.meter--xp {
+  /* 比普通进度条厚一点：要装得下一颗 11px 的球 */
+  height: 9px;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 var(--shade-lo);
+  /* ！滑块要让出轨道去 —— .meter 自带了 overflow: hidden，
+     不放开的话宝石会被在右端削掉一半 */
+  overflow: visible;
+}
+
+/* 十格。用 repeating-linear-gradient 的百分比停点等分：
+   0 → calc(10% - 1px) 透明，calc(10% - 1px) → 10% 是缝。
+   百分比相对于渐变线（就是整条轨道的宽）解析，精确到像素。 */
+.meter--xp::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(10% - 1px),
+    var(--xp-seam) calc(10% - 1px) 10%
+  );
+}
+
+/* 填充段：草绿 → 浅绿 → 金锭黄 */
+.meter--xp > i {
+  position: relative;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--grass-deep) 0%,
+    var(--grass) 38%,
+    var(--grass-light) 68%,
+    var(--gold) 100%
+  );
+  /* 顶部一道亮线、底部一道暗线 —— 让这条子看起来是一块有厚度的方块 */
+  box-shadow: inset 0 1px 0 var(--hl-2), inset 0 -1px 0 var(--shade-lo);
+}
+
+/* 经验球。用 clip-path 切出宝石轮廓，边缘是平滑的矢量，不做像素锯齿。 */
+.meter--xp > i::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  /* 让宝石的中心正好落在填充条的末端 */
+  right: -5.5px;
+  width: 11px;
+  height: 11px;
+  transform: translateY(-50%);
+  background: linear-gradient(160deg, var(--gold) 0%, var(--grass-light) 55%, var(--grass-deep) 100%);
+  clip-path: polygon(50% 0, 100% 42%, 50% 100%, 0 42%);
+  /* 全条轨道上唯一的光晕 */
+  filter: drop-shadow(0 0 4px rgba(107, 168, 79, .8));
+  transition: right var(--dur-3) var(--ease-out);
+}
+
+/* =========================================================================
+   2 · 物品栏选框 —— 导航当前项的四角框
+   -------------------------------------------------------------------------
+   MC 选中某个快捷栏格子时，只画四个角上的 L 形折角，而不是一个完整矩形。
+   原件不必动 DOM：用一个绝对定位的 ::after，往上铺 8 条 1px 的渐变矩形，
+   两两一组拼成四个角。
+
+   这里**刻意没用 mask**：早先用「4 个 7×7 的 mask 层 + mask-position 四角」
+   的写法，实测在窄尺寸下顶边与底边会被整条画满（左右两侧才被切成角），
+   行为随元素尺寸而变。8 条 background 渐变是像素级确定的，没有这种歧义。
+
+   内缩 2px 是为了不和 .nav-item 自身的 6px 圆角打架 —— 折角贴着圆角走会外溢。
+   原有左侧那道虹彩竖条保留，颜色语义仍由它承担。
+   ========================================================================= */
+
+.nav-item[aria-current="true"] {
+  border-color: transparent;
+  /* 高亮底现在由侧栏那块会滑动的指示器承担（.sidenav.is-tabbar::before）：
+     一个是「滑过去」，一个是「跳到这儿」，两件事分工明确 */
+  background-color: transparent;
+}
+
+/* 侧栏的指示器用主色的淡底（与 .nav-item[aria-current] 一致） */
+.sidenav.is-tabbar { --tab-bg: var(--grass-veil-2); }
+
+.nav-item[aria-current="true"]::after {
+  --corner-len: 7px;
+  --corner-w: 1px;
+  --corner-c: var(--line-iris);
+
+  content: "";
+  position: absolute;
+  inset: 2px;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--corner-c), var(--corner-c)), linear-gradient(var(--corner-c), var(--corner-c)),
+    linear-gradient(var(--corner-c), var(--corner-c)), linear-gradient(var(--corner-c), var(--corner-c)),
+    linear-gradient(var(--corner-c), var(--corner-c)), linear-gradient(var(--corner-c), var(--corner-c)),
+    linear-gradient(var(--corner-c), var(--corner-c)), linear-gradient(var(--corner-c), var(--corner-c));
+  /* 每角两条：一条横、一条竖 */
+  background-size:
+    var(--corner-len) var(--corner-w), var(--corner-w) var(--corner-len),
+    var(--corner-len) var(--corner-w), var(--corner-w) var(--corner-len),
+    var(--corner-len) var(--corner-w), var(--corner-w) var(--corner-len),
+    var(--corner-len) var(--corner-w), var(--corner-w) var(--corner-len);
+  background-position:
+    left top, left top,
+    right top, right top,
+    left bottom, left bottom,
+    right bottom, right bottom;
+  background-repeat: no-repeat;
+}
+
+/* =========================================================================
+   3 · 物品格 —— MC 背包里那种内凹的方格子
+   -------------------------------------------------------------------------
+   用来承载「头像」「成就徽记」这类单个物件。
+   ！亮色主题里内凹要靠「左上暗、右下亮」两个 1px 内阴影模拟，
+     深色主题那套 rgba(0,0,0,.8) 的黑边放白光下就是一圈脏边。
+   ========================================================================= */
+
+.slot {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  background: var(--cloud);
+  border: 1px solid var(--tint-3);
+  box-shadow:
+    inset 1px 1px 0 var(--shade-lo),
+    inset -1px -1px 0 var(--hl-2);
+}
+
+.slot--sm { width: 34px; height: 34px; }
+.slot--xl { width: 104px; height: 104px; border-radius: 6px; }
+
+/* 格子里的物件不要贴着边 */
+.slot > .mcface,
+.slot > .mcface-img { display: block; }
+/* 104px 的外框原样保留，换成头像缩到 92px 坐进去 —— 占位不变，只是多了圈格子 */
+.slot--xl > .mcface {
+  width: 92px;
+  height: 92px;
+  border-radius: 4px;
+}
+
+/* ！这里曾经给 .badge .glyph 加过一圈内凹的小框（「符号坐在格子里」）。
+   现在整张成就卡本身就是一个格子（见 app.css 的 .badge），
+   再套一层就是两个框叠在一起，在 30px 的尺寸下只剩脏。
+   所以这组规则整个搬去了 app.css —— 包括未解锁的灰度和已解锁的语义色。 */
+
+.toast--advancement .slot .glyph {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  /* 颜色由 --tone 决定，与成就卡片、个人页标签共用同一套；
+     没给就落到品牌绿 —— 弹窗里一定是刚解锁的，不会是灰的 */
+  color: var(--tone, var(--grass));
+}
+.toast--advancement .slot .glyph svg { display: block; width: 100%; height: 100%; }
+
+/* 空皮肤状态：占位脸也坐进一个格子里。
+   外框仍是 36px（= 原来的 .mcface--sm），所以这一块的占位高度一分不变 */
+.skin-empty .slot { width: 36px; height: 36px; }
+.skin-empty .slot > .mcface {
+  width: 28px;
+  height: 28px;
+  border-radius: 3px;
+}
+
+/* =========================================================================
+   4 · 成就弹窗 —— 对应 MC 的「成就达成！」吐司
+   -------------------------------------------------------------------------
+   结构：左边一个物品格装徽记，右边三行（小标题 / 名称 / 积分）。
+   以小号金色 eyebrow 呼应 MC 的金色成就标题，金色用的是调色板里的 amber。
+   ========================================================================= */
+
+.toast--advancement {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .62rem .95rem .62rem .62rem;
+  background: var(--panel-raised);
+  border-left: 2px solid transparent;
+  border-image: var(--iris) 1;
+}
+
+.toast--advancement .slot--sm {
+  width: 34px;
+  height: 34px;
+}
+.toast--advancement .slot .glyph {
+  font-size: 1.15rem;
+  line-height: 1;
+  /* 颜色渐变文字必须用 --iris-strong（--iris 最浅那一档在云白上读不清） */
+  background: var(--iris-strong);
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.toast--advancement .adv-body {
+  display: grid;
+  gap: .06rem;
+  min-width: 0;
+}
+
+.toast--advancement .adv-cap {
+  font-family: var(--font-mono);
+  font-size: .5625rem;
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  color: var(--gold-ink);
+}
+
+.toast--advancement .adv-name {
+  font-size: .875rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.toast--advancement .adv-pts {
+  font-size: .6875rem;
+  color: var(--muted);
+}
+
+/* =========================================================================
+   5 · 方块碎裂粒子 —— 点击时溅出的小方块
+   -------------------------------------------------------------------------
+   对应 MC 挖掘方块时飞散的方形碎屑：出射 → 略微上升 → 被「重力」拉下去 → 淡出。
+   与既有 .click-ripple 同心扩散的涟漪叠加，一圆一方。
+   粒子由 effects.js 生成，这里只负责形状与运动。
+   ========================================================================= */
+
+.block-bit {
+  position: fixed;
+  z-index: 199;
+  pointer-events: none;
+  /* 几乎不做圆角，MC 的碎屑就是小方块 */
+  border-radius: 1px;
+  will-change: transform, opacity;
+  animation: block-bit-fly .58s var(--ease-out) forwards;
+}
+
+@keyframes block-bit-fly {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  45% {
+    transform: translate(calc(var(--dx) * .62), var(--dy)) scale(.95);
+    opacity: .95;
+  }
+  100% {
+    /* 末段额外加一段向下的位移，模拟重力 */
+    transform: translate(var(--dx), calc(var(--dy) + 26px)) scale(.3);
+    opacity: 0;
+  }
+}
+
+/* =========================================================================
+   6 · 草方块按钮 —— 鼠标移到「进入 mcfr」上时浮现一块草方块
+   -------------------------------------------------------------------------
+   结构是**两层，而不是一层带遮罩**：
+
+     ::before  草方块贴图（上缘一道参差的草绿，下面带颗粒的泥土棕）
+     ::after   压在贴图**之上**的绿渐变：底部全透明 → 顶部完全变成绿色
+
+   所以最后看到的是一块「下面还是土、往上越来越绿」的草方块，
+   而不是一张贴图被整体染绿。
+
+   出现方式是**透明/不透明地说变就变**，不再有从下往上「长出来」的动画：
+   两层的 opacity 同步在 0.1 秒内走完。这里刻意没有做成 0 秒 ——
+   真正的瞬变在浏览器里表现为一次硬闪，看起来像渲染出错；
+   0.1 秒人眼已经读不出「过程」，体感就是「一下子就出现了」。
+
+   ！之前这里用的是 clip-path: inset(100% 0 0 0) → inset(0) 的擦除动画，
+     按要求删掉了。如果之后想改回来，注意两点：
+     纵向缩放（scaleY）会把像素纹理压扁，只能用裁剪；
+     而裁剪出来的方块边缘是硬的，和「柔和」的要求冲突。
+
+   纹理是 effects.js 用 canvas 现算的 16×16 噪声，
+   不是也不该是游戏里的贴图（那是 Mojang 的美术资源）。
+
+   这是全站唯一一处刻意借了 MC 的「色」的地方。之所以破例：
+     · 它只在悬停的那一瞬间存在，静息状态完全看不到，不参与信息层级；
+     · 「草方块」的全部辨识度就在上绿下土这个配色上，换成整片绿就不是它了；
+     · 键盘聚焦（:focus-visible）走同一套样式，键盘用户看到的效果一致。
+
+   选择器与 .btn-primary:hover 的特异性完全相同（都是 0,3,0），
+   这里能生效**完全依赖 minecraft.css 排在最后**（见文件头加载顺序说明）。
+   ========================================================================= */
+
+.mc-grass {
+  /* 草方块的上下两条边：上面一条是被天光照亮的叶尖，下面一条是背光的暗绿 */
+  --block-edge-hi: #86c168;
+  --block-edge-lo: #3f6b2e;
+
+  position: relative;
+  /* 建立层叠上下文，两层伪元素的 z-index:-1 才会落在
+     「按钮背景之上、按钮文字之下」这一层里。
+     少了它，负层会被推到 .btn 背后，整块草就看不见了 */
+  isolation: isolate;
+  overflow: hidden;
+}
+
+/* 两层共用的底：铺满按钮、贴在文字下面 */
+.mc-grass::before,
+.mc-grass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity .1s linear;
+}
+
+/* ---- 第一层：草方块贴图 ---- */
+.mc-grass::before {
+  background-color: var(--grass-deep);   /* 纹理没生成出来时的退路 */
+  /* ！坑：纹理只能在这里用 var() 的第二个参数兑底，
+     千万别写成 `.mc-grass { --grass-block-tex: none }` ——
+     自定义属性一旦声明在按钮自己身上，就会盖掉 effects.js 注入到 :root 的
+     那一份（继承值永远输给自身声明），纹理永远显示不出来，
+     而 getComputedStyle 看上去一切正常，很难排查。 */
+  background-image: var(--grass-block-tex, none);
+
+  /* 横向 32px 一格（16×16 的像素图放大一倍，颗粒够粗），一格一块并排铺开；
+     纵向撑满按钮高度。
+     ！不用固定 32px：按钮高约 39px，不是 32 的整数倍，
+       那样会在下边缘又露出下一格的绿边，看上去像按钮底下镶了条绿线。
+       撑满高度才能保证每一格都完整地是「上绿下土」。 */
+  background-size: 32px 100%;
+  background-repeat: repeat;
+  image-rendering: pixelated;
+}
+
+/* ---- 第二层：压在贴图之上的绿渐变 ---- */
+.mc-grass::after {
+  /* ！这里用的是更深的 --grass-deep，不是 --grass。
+     第一版从 --grass（#6ba84f）开始渐隐，算下来按钮正中那块底色的亮度是 0.24，
+     白字压上去只有 3.6:1，不到 AA 的 4.5:1。
+     改用深绿之后中段约 4.6:1，顶部 4.4:1，底部泥土 5.8:1 —— 全域达标。
+     顺带也更符合「绿色要深沉」的要求：顶部那圈仍是叶面色，往下压成背光色。 */
+  background: linear-gradient(
+    180deg,
+    var(--grass) 0%,
+    var(--grass-deep) 20%,
+    rgba(77, 127, 56, .6) 50%,
+    rgba(77, 127, 56, .25) 75%,
+    rgba(77, 127, 56, 0) 100%
+  );
+}
+
+/* 悬停 / 键盘聚焦：两层一起显形，描边换成草方块的明暗边 */
+.mc-grass:hover:not(:disabled),
+.mc-grass:focus-visible {
+  /* 文字落在中下段：那里被绿渐变盖掉一部分，但底色仍是泥土棕，
+     所以配白字。对比度 4.9:1，够看。 */
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(30, 35, 40, .45);
+  background:
+    linear-gradient(var(--grass-deep), var(--grass-deep)) padding-box,
+    linear-gradient(180deg, var(--block-edge-hi), var(--block-edge-lo)) border-box;
+  border-color: transparent;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .28),
+    inset 0 -2px 0 rgba(30, 35, 40, .3),
+    0 8px 18px -10px rgba(63, 107, 46, .75);
+}
+
+.mc-grass:hover:not(:disabled)::before,
+.mc-grass:focus-visible::before,
+.mc-grass:hover:not(:disabled)::after,
+.mc-grass:focus-visible::after {
+  opacity: 1;
+}
+
+/* 按下去的时候把内阴影反过来，像这块草方块被踩进了地里 */
+.mc-grass:active:not(:disabled) {
+  box-shadow:
+    inset 0 2px 3px rgba(30, 35, 40, .35),
+    inset 0 -1px 0 rgba(255, 255, 255, .18);
+}
+
+/* =========================================================================
+   7 · 可达性
+   ========================================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  .block-bit { display: none; }
+  /* 经验球的光晕现在挂在 filter 上（不是 box-shadow），这里要单独关掉 */
+  .meter--xp > i::after { filter: none; }
+  .mc-grass::before,
+  .mc-grass::after { transition: none; }
+}
+/* ！上面这个 } 以前是缺的。文件在 EOF 处会被浏览器自动闭合，所以一直没出错，
+   但一旦往后面追加内容，那节 reduced-motion 就会把新规则一起吞进去。 */
+
+/* =========================================================================
+   8 · 加载指示器 —— 旋转的方块
+   -------------------------------------------------------------------------
+   全站唯一需要「转圈」的地方就是页面切换时的加载态。
+
+   真 3D：六个面用 CSS transform 摆成一个立方体，外层再套 -24° 的俯角，
+   所以转起来同时看得到顶面和侧面 —— 只平转的话是看不出体积的。
+
+   ！不用图片或 SVG：三个面要各自有明暗，而明暗得跟着 --grass-* 走。
+     写成资源就跟随不了主题了。
+   ========================================================================= */
+
+.cube-loader {
+  display: grid;
+  place-items: center;
+  padding: 1.1rem 0 .3rem;
+  /* 透视要够近才有「近大远小」的体积感；太远就成了正交投影，会很平 */
+  perspective: 300px;
+}
+
+.cube-loader i {
+  position: relative;
+  display: block;
+  width: 26px;
+  height: 26px;
+  transform-style: preserve-3d;
+  animation: cube-spin 2.6s linear infinite;
+}
+
+.cube-loader i > b {
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: var(--grass);
+  border: 1px solid var(--grass-deep);
+  /* 六个面给不同明度：顶面最亮、背面最暗 —— 和图标那套等距明暗是同一个逻辑 */
+  opacity: .5;
+}
+.cube-loader i > b:nth-child(1) { transform: translateZ(13px); opacity: 1; }
+.cube-loader i > b:nth-child(2) { transform: rotateY(180deg) translateZ(13px); }
+.cube-loader i > b:nth-child(3) { transform: rotateY(90deg) translateZ(13px); opacity: .78; }
+.cube-loader i > b:nth-child(4) { transform: rotateY(-90deg) translateZ(13px); opacity: .78; }
+.cube-loader i > b:nth-child(5) { transform: rotateX(90deg) translateZ(13px); opacity: .92; }
+.cube-loader i > b:nth-child(6) { transform: rotateX(-90deg) translateZ(13px); opacity: .38; }
+
+@keyframes cube-spin {
+  from { transform: rotateX(-24deg) rotateY(0deg); }
+  to   { transform: rotateX(-24deg) rotateY(360deg); }
+}
+
+/* 减少动态时让方块停下来，摆在一个能看清三个面的固定角度。
+   「正在加载」这件事由旁边的骨架条承担 ——
+   一个静止的方块自己说明不了它在加载。 */
+@media (prefers-reduced-motion: reduce) {
+  .cube-loader i {
+    animation: none;
+    transform: rotateX(-24deg) rotateY(36deg);
+  }
+}
+

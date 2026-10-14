@@ -1,0 +1,1116 @@
+/* =========================================================================
+   mcfr · 设计系统层
+   -------------------------------------------------------------------------
+   设计语言：**现代体素主义**。
+   以现代网页的秩序、留白、可读性为骨架，把《我的世界》的方块、像素、
+   生物群系、合成逻辑当作抽象语义来用 —— 而不是把游戏画面搬进网页。
+
+   界面原则（照抄设计文档，改样式时请对照着看）：
+     1. 统一网格与 8pt 间距；
+     2. 用留白、字号、字重、颜色建立层级，不靠装饰堆叠；
+     3. 内容优先，界面元素退后；
+     4. 全站一致、可预测；
+     5. 移动优先、触控友好；
+     6. 可访问性优先：对比度、键盘焦点、色盲友好、减少动态。
+
+   禁止：全站像素字体 / 高饱和堆砌 / 游戏贴图直接铺满 /
+         装饰性动画过多 / 低对比难阅读 / 装饰压过内容。
+   ========================================================================= */
+
+/* 像素字体。本地自托管（12KB，仅 latin 子集），页面不会向任何外部域名发请求。
+   unicode-range 精确声明了它负责的字符范围 —— 中文与其它符号会自动落到
+   字体栈后面的系统字体上，所以把 "Press Start 2P" 排在第一位是安全的。
+   授权与来源见 frontend/fonts/README.txt（SIL OFL 1.1）。 */
+@font-face {
+  font-family: "Press Start 2P";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/press-start-2p-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+                 U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+                 U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  /* ======================================================= 色彩
+
+     语义是固定的，不许按个人喜好改：谁的按钮该什么颜色，由下面的注释决定。
+     用量比例大致 60% 中性色 : 30% 主色 : 10% 强调/语义色。
+
+       草方块绿 #6BA84F → 品牌、生长、社区、积极操作
+       钻石青   #26C6DA → 交互、探索、链接、焦点
+       金锭黄   #F9A825 → 成就、奖励、高光
+       红石红   #C62828 → 错误、危险、删除
+       下界紫   #7E57C2 → 稀有、特殊、限定
+       深板岩灰 #1E2328 / #6B7280 → 文本与结构
+       云白     #F7F9F8 → 安静表面与留白
+
+     ！主题色在过去几个版本里换过三次（虹彩 → 草绿 → 更深沉的草绿），
+       每次都要把下面这几个令牌的值改掉；除此之外的地方**不允许**写死颜色。
+     ======================================================= */
+
+  /* ---- 表面：云白体系，越往下越「高」 ---- */
+  --void:          #eef1ee;                    /* 页面底：比云白再灰一档，卡片才浮得起来 */
+  --ink:           #f7f9f8;                    /* 云白：安静表面、内嵌区域 */
+  --panel:         #ffffff;                    /* 卡片 */
+  --panel-raised:  #ffffff;                    /* 抬起：模态、浮层 */
+  --panel-glass:   rgba(255, 255, 255, .82);
+
+  /* 中性叠加。亮色主题里不能用 rgba(255,255,255,α) 去叠 —— 那是深色主题的写法，
+     在浅底上完全看不见。要在任意底色上压一层「很淡的灰」，就用这三个。 */
+  --tint-1:        rgba(30, 35, 40, .04);
+  --tint-2:        rgba(30, 35, 40, .07);
+  --tint-3:        rgba(30, 35, 40, .12);
+
+  /* ---- 描边 ---- */
+  --line:          rgba(30, 35, 40, .10);
+  --line-strong:   rgba(30, 35, 40, .18);
+  --line-iris:     rgba(107, 168, 79, .40);
+
+  /* ---- 文本 ---- */
+  --text:          #1e2328;                    /* 深板岩灰 900 */
+  --text-soft:     #404a53;
+  /* ！亮色主题的次级文本必须比深色主题深得多。
+     同一个 #83839a 放在深底上是 5:1，放在云白上只剩 2.4:1 ——
+     那种“淡淡的灰”在白底上根本读不清，是亮色主题最常见的可访问性坑。 */
+  --muted:         #5c646e;                    /* 约 5.0:1 */
+  --dim:           #78828b;                    /* 约 3.4:1，只给装饰性文字用 */
+
+  /* ---- 主色：草方块绿（同一块草方块从上往下的三档）---- */
+  --grass-light:   #86c168;
+  --grass:         #6ba84f;
+  --grass-deep:    #4d7f38;
+  /* 压在草绿上的文字/图标。绿色是中亮度色，白字压上去只有 2.8:1（不合格），
+     深墨绿字反而有 5.9:1。所以站点里所有“绿底”一律配深色字，不配白字。 */
+  --on-grass:      #13240d;
+  /* 绿底的“深绿文字”：链接、当前导航项、强调词这类需要在浅底上显得是绿色、
+     但又得看得清的地方（约 5.5:1） */
+  --grass-ink:     #3b6b2b;
+
+  /* 兼容别名：这一组名字是早期「虹彩」主题留下的，值早就不是那个意思了。
+     留着是因为全站引用上百处（--iris / --iris-rev / --iris-veil / --line-iris，
+     加上 .iris-text / .iris-rule / .eyebrow--iris / .tag--iris / .toast--iris，
+     还有 effects.js 里的粒子配色），改名收益是零、漏一处却是静默失效。
+     新写的样式请直接用 --grass-*。 */
+  --cyan:          var(--grass);
+  --magenta:       var(--grass-deep);
+  --amber:         var(--gold);
+  --iris:          linear-gradient(100deg, var(--grass-light) 0%, var(--grass) 52%, var(--grass-deep) 100%);
+  --iris-rev:      linear-gradient(280deg, var(--grass-light) 0%, var(--grass) 52%, var(--grass-deep) 100%);
+  --iris-veil:     linear-gradient(100deg, rgba(134,193,104,.16), rgba(107,168,79,.14) 52%, rgba(77,127,56,.12));
+  /* 文字专用的一档更深的绿。
+     ！--iris 是拿来当填充色和描边的，最浅那一档是 #86c168；
+       把它裁成文字压在云白上只有 1.8:1，基本没法读。
+       凡是「颜色渐变文字」都要用这个，不能用 --iris。 */
+  --iris-strong:   linear-gradient(100deg, #5d9143 0%, #4d7f38 50%, #3b6b2b 100%);
+
+  /* ---- 语义色：固定语义，**不要**跟着主题色一起改 ---- */
+  --diamond:       #26c6da;                    /* 交互、探索、链接、焦点 */
+  --gold:          #f9a825;                    /* 成就、奖励、高光 */
+  --redstone:      #c62828;                    /* 错误、危险、删除 */
+  --nether:        #7e57c2;                    /* 稀有、特殊、限定 */
+  --cloud:         #f7f9f8;
+
+  --ok:            var(--grass);               /* 「积极操作」就是草绿，语义同源 */
+  --warn:          var(--gold);
+  --danger:        var(--redstone);
+
+  /* ================================================= 模式相关令牌（亮/暗会换值）
+
+     下面这一组是整个文件里**唯一**会随深浅主题换值的部分。上面那些表面色
+     （--void / --panel / --text …）同样会换，换的是「值」；
+     而品牌色与语义色（--grass-* / --diamond / --gold / --redstone / --nether）
+     整体不换 —— 它们是「mcfr 是绿的」这件事本身。
+
+     ！写样式时**不要**再用裸的 rgba(255,255,255,α) 或 rgba(30,35,40,α)。
+       那是「假定背景一定是白的」的写法：切到深色主题后，前者会糊成一片白雾，
+       后者会彻底消失。两者都不报错、不告警，只是那个效果静静地没有了 ——
+       这是本次改造里最容易再次踩进去的坑。统一走下面这些令牌。
+     ================================================= */
+
+  /* 表面的高光与内凹。深色主题要靠「提亮」而不是「压暗」来表达起伏，
+     所以这一组在两种主题下的语义是反的。 */
+  --hl-1:          rgba(255, 255, 255, .50);   /* 斜角高光 */
+  --hl-2:          rgba(255, 255, 255, .95);   /* 内凹的亮边（右下） */
+  --shade-lo:      rgba(30, 35, 40, .10);      /* 内凹的暗边（左上） */
+
+  /* 底纹与装饰 */
+  --grid-dot:      rgba(30, 35, 40, .075);     /* 半调网点 */
+  --grid-line:     rgba(30, 35, 40, .028);     /* 32px 区块网格 */
+  --pixel-line:    rgba(30, 35, 40, .022);     /* 8px 面板方块底纹 */
+  --scroll:        rgba(30, 35, 40, .18);
+  --scroll-hover:  rgba(30, 35, 40, .32);
+  --glow-a:        rgba(107, 168, 79, .16);    /* 顶部环境光：草绿 */
+  --glow-b:        rgba(38, 198, 218, .10);    /* 顶部环境光：钻石青 */
+
+  /* 不透明表面：顶栏（半透明毛玻璃）与模态遮罩 */
+  --topbar-bg:     rgba(255, 255, 255, .86);
+  --backdrop:      rgba(30, 35, 40, .34);
+
+  /* 原生控件：<select> 展开后的选项列表由系统绘制，CSS 只能给底色，
+     所以必须有一份令牌，否则深色主题下会弹出一块刺眼的白。 */
+  --select-bg:     #ffffff;
+  --field-focus-bg:#ffffff;
+
+  /* 实体按钮（.btn-solid）。深色主题下它要反过来是「浅底深字」，
+     所以字色不能写死 #fff。 */
+  --solid:         #1e2328;
+  --solid-hover:   #000000;
+  --on-solid:      #ffffff;
+
+  /* 「淡色底 + 同色系文字」这一组。
+     淡底的部分是透明的，压在任意底色上都成立；但**文字**必须比主色深，
+     否则在浅底上根本读不出来 —— 所以两者要分开给值。 */
+  --gold-veil-1:   rgba(249, 168, 37, .10);
+  --gold-veil-2:   rgba(249, 168, 37, .18);
+  --gold-line:     rgba(249, 168, 37, .38);
+  --gold-ink:      #8a5a12;
+  --gold-ink-2:    #7a5406;
+  --gold-ink-hi:   #a9711a;
+  --gold-glyph:    #c8860f;
+
+  --grass-veil-1:  rgba(107, 168, 79, .08);
+  --grass-veil-2:  rgba(107, 168, 79, .12);
+  --grass-line:    rgba(107, 168, 79, .24);
+
+  --red-veil-1:    rgba(198, 40, 40, .06);
+  --red-veil-2:    rgba(198, 40, 40, .12);
+  --red-line:      rgba(198, 40, 40, .26);
+  --red-ink:       #971f1f;
+
+  --cyan-veil:     rgba(38, 198, 218, .18);
+  --cyan-ink:      #0d6f7c;
+
+  /* 离子背景画布的透明度。深色底上绿粒子的对比度反而更高，所以要再压一档。 */
+  --ion-opacity:   .28;
+
+  /* MC 经验条的「分格缝」。浅色主题里未填充部分是浅灰底，
+     只有白缝才「只在填充部分看得见」；深色主题里否则要反过来用暗缝。 */
+  --xp-seam:       rgba(255, 255, 255, .62);
+
+  /* 头像方块的地色亮度。头像内部的格子是 JS 用固定的 hsl 值画上去的，
+     所以换主题时只能微调这一档亮度，不能大改 —— 改狠了格子就糊在底色上。
+     见 app.js / admin.js 的 avatar()。 */
+  --face-l:        90%;
+  --face-l-skin:   86%;
+
+  /* 附魔光效：已解锁的成就卡边缘那一圈极淡的紫 → 青。
+     这是全站唯一一处「装饰性的光」—— 它不参与信息层级，
+     只是把「这个东西已经属于你了」写得比文字更轻一点。 */
+  --enchant-a:     rgba(126, 87, 194, .16);
+  --enchant-b:     rgba(38, 198, 218, .14);
+
+  /* ---- 字体 ----
+     正文用现代无衬线。项目不能引 CDN、也没有构建步骤，所以这里只能排一串
+     候选，本机装了哪个就用哪个（Windows 上通常落到 Segoe UI + 微软雅黑）。
+
+     ！设计文档希望「像素字体只用于标题、数字、徽章、标识」。
+       我们没有也不想打包像素字体文件（会多出一个二进制资源，且中文覆盖不全），
+       所以改用等宽 + 表格数字来承担那三个位置的「方块感」——
+       见 --font-pixel 的用法。 */
+  --font-sans:  "Inter", "Noto Sans SC", "Segoe UI Variable Display", "Segoe UI",
+                "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-display: "Inter", "Noto Sans SC", "Segoe UI Variable Display", "Segoe UI",
+                  "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono:  "JetBrains Mono", "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+  /* 数字 / 徽章 / 等级专用。像素字体**只**出现在这几个地方：
+     等级数字、积分、计数、极短的拉丁标签（Lv.1、1 / 12）。
+     ！正文与标题一律不许用它：中文字形它根本没有（靠 unicode-range
+       自动回退），而且整段中文用像素字体会把阅读速度拉得很低。
+     尺寸要跟着调小 —— 这个字体的字面宽度大约是普通无衬线的两倍。 */
+  --font-pixel: "Press Start 2P", var(--font-mono);
+
+  /* ---- 圆角与阴影 ----
+     亮色主题的阴影必须轻：深色主题那种 rgba(0,0,0,.9) 的大黑影放在白底上
+     会变成一坨脏灰，看起来像没对齐的浮层。 */
+  --r-sm: 6px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+
+  --shadow-pop:  0 24px 60px -28px rgba(30, 35, 40, .30);
+  --shadow-lift: 0 12px 28px -18px rgba(30, 35, 40, .24);
+  --shadow-card: 0 1px 2px rgba(30, 35, 40, .05), 0 10px 24px -18px rgba(30, 35, 40, .22);
+
+  /* ---- 缓动与时长 ----
+     设计文档要求动效 150–250ms、ease-out、短而克制，所以把时长收成三档，
+     不要再往样式里写 .35s / .45s 这种数。 */
+  --ease: cubic-bezier(.22, .61, .36, 1);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --dur-1: .15s;   /* 微反馈：hover、focus、颜色 */
+  --dur-2: .2s;    /* 常规：背景、描边、透明度 */
+  --dur-3: .25s;   /* 大块位移：标签指示器、面板切换 */
+}
+
+/* =========================================================================
+   重置与画布
+   ========================================================================= */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+/* color-scheme 决定浏览器**自己画**的那部分用哪套配色：
+   原生滚动条、<select> 展开的选项列表、日期选择器、默认焦点环、
+   表单自动填充的底色……这些都不受 CSS 控制，但会跟着这个属性走。
+   不设的话，深色主题下会从页面里弹出一块刺眼的白。 */
+html { color-scheme: light; }
+
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.65;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 半调网点纹 + 32px 区块网格：前者是设计系统的底纹，
+   后者呼应 Minecraft 的「区块」概念，两者叠加但都很淡。
+   ！亮色主题里这两个必须用深色半透明。写成 rgba(255,255,255,α) 的话，
+     在白底上就是彻底消失 —— 不报错、也不报 warning，只是白忙一场。 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle, var(--grid-dot) 1px, transparent 1.2px),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 4px 4px, 32px 32px, 32px 32px;
+  -webkit-mask-image: radial-gradient(ellipse 130% 78% at 50% -10%, #000 14%, transparent 72%);
+          mask-image: radial-gradient(ellipse 130% 78% at 50% -10%, #000 14%, transparent 72%);
+}
+
+/* 顶部环境光晕：草方块在日光下的颜色，撑住整页的基调。
+   亮色底上这两团绿要更淡，否则会变成两块脏斑点。 */
+body::after {
+  content: "";
+  position: fixed;
+  top: -22vh;
+  left: -10vw;
+  right: -10vw;
+  height: 72vh;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38rem 26rem at 14% 8%, var(--glow-a), transparent 66%),
+    radial-gradient(34rem 24rem at 86% 4%, var(--glow-b), transparent 66%);
+  filter: blur(14px);
+}
+
+/* 选中高亮用半透明的草绿，在深浅两种底色上都读得出来，因此没有做令牌。 */
+::selection { background: rgba(107, 168, 79, .30); color: var(--text); }
+
+/* 滚动条 */
+* { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--scroll);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); background-clip: content-box; }
+
+/* =========================================================================
+   排版
+   ========================================================================= */
+
+h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
+p { margin: 0; }
+
+/* 标题改成现代无衬线，并且**去掉斜体**。
+   原来这里用的是超大斜体衬线，是旧设计语言的标志手势；
+   新的「现代体素主义」要的是秩序与清爽，衬线斜体那种编辑感与它相冲。
+   另一个很实际的原因：中文没有真斜体，浏览器只能做合成倾斜，
+   字号一大就很明显是「歪」的。 */
+.display {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -.02em;
+}
+.display-xl { font-size: clamp(2.1rem, 5vw, 3.4rem); }
+.display-lg { font-size: clamp(1.65rem, 3.4vw, 2.35rem); }
+.display-md { font-size: clamp(1.3rem, 2.2vw, 1.6rem); }
+
+/* 大标题的绿色强调片段（取的是草方块上的那撮绿） */
+.iris-text {
+  background: var(--iris-strong);
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.eyebrow {
+  font-size: .688rem;
+  font-weight: 600;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.eyebrow--iris {
+  background: var(--iris-strong);
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.lede { color: var(--text-soft); max-width: 48ch; }
+.muted { color: var(--muted); }
+.dim { color: var(--dim); }
+.mono { font-family: var(--font-mono); font-size: .813rem; letter-spacing: .02em; }
+
+/* 数字 / 徽章 / 标识专用。
+   ！这个字体**只有 400 一个字重**，写 font-weight: 700 是徒劳的；
+     而且字面宽度约为普通无衬线的两倍，用的时候字号要跟着降一档。 */
+.pixel {
+  font-family: var(--font-pixel);
+  letter-spacing: .01em;
+}
+
+/* =========================================================================
+   主题手势：细带 / 光球
+   ========================================================================= */
+
+.iris-rule {
+  height: 2px;
+  border: 0;
+  margin: 0;
+  background: var(--iris);
+  border-radius: 2px;
+}
+.iris-rule--fade {
+  background: linear-gradient(90deg,
+    transparent, rgba(134,193,104,.8) 14%, rgba(107,168,79,.75) 52%, rgba(77,127,56,.65) 86%, transparent);
+}
+
+/* 像素节奏的绿带：一段一段的方块（三级绿），呼应 Minecraft 的像素感 */
+.iris-rule--pixel {
+  height: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--grass-light) 0 10px,
+    var(--grass) 10px 20px,
+    var(--grass-deep) 20px 30px,
+    transparent 30px 36px
+  );
+  opacity: .7;
+}
+.iris-rule--v { width: 2px; height: auto; align-self: stretch; border-radius: 2px; }
+
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(26px);
+  opacity: .5;
+  background: radial-gradient(circle at 32% 30%,
+    rgba(134,193,104,.9), rgba(107,168,79,.55) 46%,
+    rgba(77,127,56,.38) 68%, transparent 72%);
+}
+
+/* =========================================================================
+   面板与「边缘发光」描边
+   ========================================================================= */
+
+.panel {
+  position: relative;
+  /* 第二、三层是 8px 的像素方块底纹，像 Minecraft 的方块表面 */
+  background:
+    linear-gradient(var(--panel), var(--panel)),
+    linear-gradient(var(--pixel-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--pixel-line) 1px, transparent 1px);
+  background-size: auto, 8px 8px, 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
+  /* 这里原来有 backdrop-filter: blur(14px)，现已移除，原因有两个：
+     一、背景本来就不透明，模糊最多只能影响图标边缘那点像素；
+     二、背景的离子画布每帧都在变，留着 blur 等于每帧都对一大片区域重算高斯模糊，
+         是滚动卡顿的首要来源（页面上同时存在 5–6 个 .panel）。
+     真正看得见模糊的地方（顶栏、模态遮罩）都原样保留了。 */
+}
+
+.panel--flush {
+  background:
+    linear-gradient(var(--ink), var(--ink)),
+    linear-gradient(var(--pixel-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--pixel-line) 1px, transparent 1px);
+  background-size: auto, 8px 8px, 8px 8px;
+  box-shadow: none;
+}
+.panel--pad { padding: 1.4rem; }
+
+/* 悬停时浮现绿色描边（Aether 的 edge-lit border） */
+.edge { position: relative; isolation: isolate; }
+.edge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: var(--iris);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease);
+  pointer-events: none;
+  z-index: 2;
+}
+.edge:hover::before,
+.edge:focus-within::before { opacity: .85; }
+.edge--on::before { opacity: .95; }
+
+/* =========================================================================
+   按钮
+   ========================================================================= */
+
+.btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+  padding: .6rem 1.05rem;
+  font-family: inherit;
+  font-size: .813rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: var(--text);
+  background: var(--tint-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease),
+              transform var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+.btn:hover:not(:disabled) {
+  background: var(--tint-2);
+  border-color: var(--line-iris);
+  /* 两侧的竖线：像素化的光晕，而不是模糊辉光 */
+  box-shadow: -2px 0 0 -1px rgba(107, 168, 79, .5), 2px 0 0 -1px rgba(107, 168, 79, .38);
+}
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+/* 焦点环用钻石青 —— 设计文档里「焦点 / 交互」归它管。
+   草绿是品牌色，用它做焦点环会和「积极操作」的按钮混在一起，分不出来。 */
+.btn:focus-visible { outline: 2px solid var(--diamond); outline-offset: 2px; }
+
+/* 主按钮：静息为绿色描边，悬停时整块被绿色填满 */
+.btn-primary {
+  color: var(--text);
+  background:
+    linear-gradient(var(--panel-raised), var(--panel-raised)) padding-box,
+    var(--iris) border-box;
+  border: 1px solid transparent;
+}
+.btn-primary:hover:not(:disabled) {
+  color: var(--on-grass);
+  background: var(--iris);
+  border-color: transparent;
+  box-shadow: 0 8px 20px -12px rgba(77, 127, 56, .7);
+}
+
+.btn-solid {
+  color: var(--on-solid);
+  background: var(--solid);
+  border-color: var(--solid);
+}
+.btn-solid:hover:not(:disabled) { background: var(--solid-hover); border-color: var(--solid-hover); }
+
+.btn-ghost { background: transparent; border-color: var(--line); color: var(--text-soft); }
+.btn-ghost:hover:not(:disabled) { color: var(--text); background: var(--tint-1); }
+
+/* 危险操作 = 红石红 */
+.btn-danger {
+  color: var(--redstone);
+  background: var(--red-veil-1);
+  border-color: var(--red-line);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--red-veil-2);
+  color: var(--red-ink);
+  border-color: var(--red-line);
+}
+
+.btn-sm { padding: .42rem .8rem; font-size: .75rem; }
+.btn-block { width: 100%; }
+
+/* =========================================================================
+   表单
+   ========================================================================= */
+
+.field { display: grid; gap: .4rem; }
+
+.field > span,
+.field-label {
+  font-size: .688rem;
+  font-weight: 600;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.input, .textarea, .select {
+  width: 100%;
+  padding: .68rem .85rem;
+  font-family: inherit;
+  font-size: .938rem;
+  line-height: 1.5;
+  color: var(--text);
+  /* 云白底 + 描边。亮色主题里输入框靠描边和白底区分，
+     不能再像深色主题那样靠「比背景亮一黅」 */
+  background: var(--cloud);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  outline: none;
+  transition: border-color var(--dur-2) var(--ease), background var(--dur-2) var(--ease),
+              box-shadow var(--dur-2) var(--ease);
+}
+.input::placeholder, .textarea::placeholder { color: var(--dim); }
+/* 聚焦环用钻石青：设计文档里「交互 / 焦点」归它管 */
+.input:focus, .textarea:focus, .select:focus {
+  border-color: var(--diamond);
+  background: var(--field-focus-bg);
+  box-shadow: 0 0 0 3px var(--cyan-veil);
+}
+.textarea { resize: vertical; min-height: 96px; }
+.select { appearance: none; cursor: pointer; padding-right: 2.2rem;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+/* 展开后的选项列表由系统绘制，CSS 只能给底色 */
+.select option { background: var(--select-bg); color: var(--text); }
+
+.hint { font-size: .75rem; color: var(--muted); line-height: 1.65; }
+.error-text { font-size: .813rem; color: var(--redstone); }
+
+/* =========================================================================
+   标签 / 胶囊 / 计数
+   ========================================================================= */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: .18rem .58rem;
+  font-size: .688rem;
+  letter-spacing: .05em;
+  color: var(--text-soft);
+  background: var(--tint-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+}
+
+.tag--iris {
+  color: var(--grass-ink);
+  border-color: transparent;
+  background:
+    linear-gradient(var(--ink), var(--ink)) padding-box,
+    var(--iris) border-box;
+  border: 1px solid transparent;
+}
+
+/* 标签里的小图标（个人页的成就标签）。颜色跟着 --tone 走，
+   与成就卡片、解锁弹窗是同一套语义色。 */
+.tag .tag-ico { flex: none; width: 13px; height: 13px; }
+.tag .tag-ico svg { display: block; width: 100%; height: 100%; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  padding: .34rem .72rem;
+  font-family: inherit;
+  font-size: .75rem;
+  font-weight: 500;
+  color: var(--text-soft);
+  background: var(--tint-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+              color var(--dur-1) var(--ease);
+}
+.chip:hover { border-color: var(--line-iris); color: var(--grass-ink); background: var(--grass-veil-1); }
+.chip[aria-pressed="true"] {
+  color: var(--on-grass);
+  font-weight: 600;
+  background: var(--grass);
+  border-color: var(--grass);
+}
+.chip-row { display: flex; flex-wrap: wrap; gap: .4rem; }
+
+/* ---- 主题切换 ----
+   三态循环按钮：跟随系统 → 浅色 → 深色，文字与图标由 js/theme.js 填。
+   设计上刻意做得比 .btn 更轻：它是个「设置项」，不是页面的主动作，
+   静息时只有很淡的底和描边，不参与信息层级。 */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  flex: none;
+  padding: .3rem .62rem;
+  font-family: inherit;
+  font-size: .75rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--muted);
+  background: var(--tint-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+              color var(--dur-1) var(--ease);
+}
+.theme-toggle:hover {
+  color: var(--text);
+  background: var(--tint-2);
+  border-color: var(--line-iris);
+}
+.theme-toggle:focus-visible { outline: 2px solid var(--diamond); outline-offset: 2px; }
+.theme-toggle__icon { font-size: .9rem; line-height: 1; }
+
+/* 窄屏只留图标 —— 顶栏上「浅色 / 深色」这两个字占的宽度足够再放半个按钮了 */
+@media (max-width: 720px) { .theme-toggle__text { display: none; } }
+
+/* 登录页和管理后台的闸门没有顶栏可以依附，用一枚固定在右上角的版本。
+   z-index 取 60：要盖住顶栏（50），但必须低于模态遮罩（90），
+   否则弹窗打开时它会浮在遮罩上面。 */
+.theme-toggle--float {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 60;
+  /* 它会浮在正文之上，只靠 --tint-1 那种淡底会看不清边界，
+     所以换成不透明度更高的 --panel-glass + 毛玻璃。 */
+  background: var(--panel-glass);
+  border-color: var(--line-strong);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* ---- 语言切换 ----
+   和 .theme-toggle 同一套外壳：它是「设置项」，不是页面的主动作。
+   但用**分段控件**而不是循环按钮 —— 主题是三态循环（点一下走一步），
+   语言是四选一，用循环按钮的话想从简体切到日语要点三下，
+   而「点了三下之后现在停在哪一档」全靠记。 */
+
+.lang-switch {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  gap: 2px;
+  background: var(--tint-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+}
+
+.lang-switch button {
+  padding: .22rem .5rem;
+  font-family: inherit;
+  font-size: .7rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+.lang-switch button:hover { color: var(--text); }
+.lang-switch button[aria-pressed="true"] {
+  color: var(--on-grass);
+  background: var(--grass);
+}
+.lang-switch button:focus-visible { outline: 2px solid var(--diamond); outline-offset: 1px; }
+
+/* 窄屏上把四个语言名压成两个字：中文 / 繁中 / EN / 日本語。
+   靠 CSS 做不到换字，所以这里只缩字号 —— 真正的取舍是
+   顶栏在 360px 宽的机器上要先保住导航和用户名。 */
+@media (max-width: 720px) {
+  .lang-switch button { padding: .2rem .38rem; font-size: .66rem; }
+}
+
+/* 登录页那枚固定在右上角。要挤在主题按钮**左边** ——
+   主题按钮在 right: 1rem，语言条得让开它的宽度。 */
+.lang-switch--float {
+  position: fixed;
+  top: 1rem;
+  right: 7.2rem;
+  z-index: 60;
+  background: var(--panel-glass);
+  border-color: var(--line-strong);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+@media (max-width: 720px) {
+  /* 主题按钮在窄屏只剩图标（约 2.4rem 宽），语言条跟着往左挪 */
+  .lang-switch--float { right: 4.2rem; }
+}
+
+.count {
+  min-width: 1.35rem;
+  padding: 0 .38rem;
+  font-family: var(--font-pixel);
+  /* 9px。像素字体的字面很宽，原尺寸会把侧栏那个小胶囊掉得很长 */
+  font-size: .5625rem;
+  line-height: 1.35rem;
+  text-align: center;
+  color: var(--on-grass);
+  background: var(--grass);
+  border-radius: var(--r-pill);
+}
+.count--soft { color: var(--text-soft); background: var(--tint-2); }
+
+/* =========================================================================
+   进度条
+   ========================================================================= */
+
+.meter {
+  position: relative;
+  height: 4px;
+  background: var(--tint-2);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+.meter > i {
+  display: block;
+  height: 100%;
+  background: var(--iris);
+  border-radius: inherit;
+  transition: width var(--dur-3) var(--ease-out);
+}
+.meter--tall { height: 6px; }
+
+/* =========================================================================
+   浮层：模态框 / 提示条
+   ========================================================================= */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 1.4rem;
+  /* 遮罩在深色主题下要压得更黑：深色页面本身就不亮，
+     浅色主题那种 34% 的压暗在上面几乎看不出「后面还有东西被挡住了」 */
+  background: var(--backdrop);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: fade-in var(--dur-2) var(--ease-out);
+}
+
+.modal {
+  position: relative;
+  width: min(620px, 100%);
+  max-height: 86vh;
+  overflow-y: auto;
+  padding: 1.6rem;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  animation: rise-in var(--dur-3) var(--ease-out);
+}
+.modal--wide { width: min(760px, 100%); }
+
+.toast-host {
+  position: fixed;
+  left: 50%;
+  bottom: 1.6rem;
+  z-index: 120;
+  display: grid;
+  gap: .5rem;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.toast {
+  padding: .7rem 1.1rem;
+  font-size: .875rem;
+  color: var(--text);
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-left: 2px solid transparent;
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-lift);
+  /* 同 .panel：背景已经不透明，模糊对最终像素的贡献极小，
+     而 .toast 是 fixed 元素，留着它会在弹提示时拖累滚动。 */
+  animation: rise-in var(--dur-3) var(--ease-out);
+  max-width: min(30rem, 88vw);
+}
+/* ！这三个要用语义色，不能用主题色：
+   --cyan 现在是草绿，而「成功」也差不多是绿，两者会糊在一起；
+   警告的琥珀更是绝对不能跟着主题变绿。 */
+.toast--ok { border-left-color: var(--ok); }
+.toast--warn { border-left-color: var(--warn); }
+.toast--bad { border-left-color: var(--danger); }
+.toast--iris { border-left-color: transparent; border-image: var(--iris) 1; }
+
+/* =========================================================================
+   工具类与动画
+   ========================================================================= */
+
+.hidden { display: none !important; }
+.stack { display: grid; gap: 1rem; }
+.stack-sm { display: grid; gap: .5rem; }
+.row { display: flex; align-items: center; gap: .6rem; }
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
+.wrap { flex-wrap: wrap; }
+.spacer { flex: 1 1 auto; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.fade-in { animation: fade-in var(--dur-3) var(--ease-out); }
+.rise-in { animation: rise-in var(--dur-3) var(--ease-out) both; }
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* =========================================================================
+   标签页切换
+   -------------------------------------------------------------------------
+   一次「切换」由两件事组成，缺一不可：
+
+     1. 指示器滑动 —— 高亮底不再瞬移，而是从旧位置滑到新位置。
+     2. 内容定向滑入 —— 往右切就从右边进来，往左切就从左边进来。
+
+   JS 侧只需要三步（都在 window.McfrEffects 上）：
+       const dir = McfrEffects.tabDir(bar);   // 算方向，顺便记住本次序号
+       McfrEffects.tabBar(bar);               // 让指示器滑过去
+       McfrEffects.tabIn(panel, dir);         // 让内容滑进来
+   或者直接 McfrEffects.tabSwap(bar, panel)。
+
+   注意：这里**不能**给 .is-tabbar 加 position: relative ——
+   侧栏 .sidenav 是 position: sticky，加上就会被这条同优先级的规则顶掉，
+   吸顶会失效。容器各自负责自己的定位（.tab-switch / .admin-tabs 在自己文件里加，
+   .sidenav 本来就是 sticky）。
+   ========================================================================= */
+
+@keyframes tab-in-right {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes tab-in-left {
+  from { opacity: 0; transform: translateX(-14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.tab-in       { animation: tab-in-right var(--dur-3) var(--ease-out) both; }
+.tab-in--back { animation: tab-in-left  var(--dur-3) var(--ease-out) both; }
+
+/* ---- 会滑动的选中指示器 ---- */
+
+/* 容器::before 就是那块高亮底，位置由 JS 写进 --tab-* 变量 */
+.is-tabbar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  width: var(--tab-w, 0);
+  height: var(--tab-h, 0);
+  border-radius: 4px;
+  background: var(--tab-bg, var(--tint-2));
+  transform: translate(var(--tab-x, 0), var(--tab-y, 0));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* is-ready 由 JS 在挂载后的第二帧加上：
+   在那之前不开过渡，否则指示器会从 (0,0) 一路滑到目标位置 */
+.is-tabbar.is-ready::before {
+  opacity: 1;
+  transition:
+    transform var(--dur-3) var(--ease-out),
+    width var(--dur-3) var(--ease-out),
+    height var(--dur-3) var(--ease-out),
+    opacity var(--dur-2) linear;
+}
+
+/* 按钮要盖在指示器上面，否则文字会被那块高亮底遮住 */
+.is-tabbar > button { position: relative; z-index: 1; }
+
+@keyframes pulse-ring {
+  0%   { transform: scale(.85); opacity: .9; }
+  70%  { transform: scale(1.6); opacity: 0; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
+
+/* =========================================================================
+   深色主题
+   -------------------------------------------------------------------------
+   开关是 <html data-theme>，值只会有 light / dark 两种 ——
+   用户选的「跟随系统」在 JS 里就已经解析成具体值了（见 js/theme.js）。
+   所以这里**不需要**再写一份 @media (prefers-color-scheme: dark) 的副本：
+   两份真值放在两个地方，迟早会不同步，而且是静默的那种。
+
+   三条原则：
+
+   1. **色相不变，明度可调。**
+      草方块绿、钻石青、金锭黄、红石红、下界紫的**色相**在两种主题下必须一致 ——
+      它们是「这个颜色代表什么」本身，换了站点的识别度就散了。
+      但**明度**要重新算：#c62828 在云白上有 4.6:1，在深板岩灰上只剩 2.2:1，
+      直接用就是一片读不清的红。所以危险色在深色下取同色相的亮版本。
+      草绿是唯一的例外，它本来就是中亮色，两种主题下都撑得住，原样不动。
+
+   2. **透明叠加要加不透明度。**
+      同一句 rgba(107,168,79,.08)，压在 #fff 上是 8% 的绿，
+      压在 #1e2328 上几乎还是黑 —— 深色底会「吃掉」透明度，
+      所以这一组普遍从 .08 提到 .14 上下。
+
+   3. **阴影要更黑更重。**
+      浅色主题里那圈 rgba(30,35,40,.22) 的灰影放在深底上完全看不出来，
+      卡片浮不起来，整页会糊成一片。深色下改用纯黑 + 更高的不透明度。
+   ========================================================================= */
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* ---- 表面：深板岩灰体系，越往上越亮 ---- */
+  --void:          #14181c;                    /* 页面底，比卡片再深一档 */
+  --ink:           #1a1f24;                    /* 安静表面 */
+  --panel:         #1e2328;                    /* 卡片：就是设计文档里的深板岩灰 900 */
+  --panel-raised:  #262d34;                    /* 抬起：模态、浮层 */
+  --panel-glass:   rgba(30, 35, 40, .82);
+  --cloud:         #171c21;                    /* 内嵌表面：比卡片更暗，方向与浅色一致 */
+
+  --tint-1:        rgba(255, 255, 255, .05);
+  --tint-2:        rgba(255, 255, 255, .09);
+  --tint-3:        rgba(255, 255, 255, .14);
+
+  --line:          rgba(255, 255, 255, .10);
+  --line-strong:   rgba(255, 255, 255, .18);
+  --line-iris:     rgba(134, 193, 104, .40);
+
+  --text:          #e6ebee;
+  --text-soft:     #bcc6cf;
+  --muted:         #8f9ba6;                    /* 约 6.2:1 */
+  --dim:           #7b8792;                    /* 约 4.3:1 */
+
+  /* ！--dim 在浅色主题里只给「装饰性文字」用（3.9:1），但实际有几处拿它
+     当小号正文（成就卡片里的「1 / 2 · 10 分」、在线时段、邮箱…）。
+     深色底上如果照抄浅色那一档的相对亮度，会掉到 3.5:1，
+     所以这里直接给到 4.3:1 —— 比浅色主题还高一点，留足余量。 */
+
+  /* 压在草绿上的字仍然是深墨绿（草绿是中亮色，白字只有 2.8:1，这条不变）；
+     但「浅底上的绿字」必须反过来提亮，否则在深板上只剩 1.4:1。 */
+  --grass-ink:     #96d474;
+
+  /* 渐变文字：深色底上往亮的一端走 */
+  --iris-strong:   linear-gradient(100deg, #a8e086 0%, #8ccb6b 50%, #6ba84f 100%);
+  --iris-veil:     linear-gradient(100deg, rgba(134,193,104,.22), rgba(107,168,79,.18) 52%, rgba(77,127,56,.14));
+
+  /* ---- 叠加与底纹：从「压暗」翻成「提亮」 ---- */
+  --hl-1:          rgba(255, 255, 255, .07);
+  --hl-2:          rgba(255, 255, 255, .16);
+  --shade-lo:      rgba(0, 0, 0, .45);
+  --grid-dot:      rgba(255, 255, 255, .040);
+  --grid-line:     rgba(255, 255, 255, .030);
+  --pixel-line:    rgba(255, 255, 255, .022);
+  --scroll:        rgba(255, 255, 255, .16);
+  --scroll-hover:  rgba(255, 255, 255, .30);
+  --glow-a:        rgba(124, 185, 94, .20);
+  --glow-b:        rgba(38, 198, 218, .13);
+
+  --topbar-bg:     rgba(22, 27, 32, .86);
+  --backdrop:      rgba(6, 8, 10, .62);
+  --select-bg:     #262d34;
+  --field-focus-bg:#222931;
+
+  /* 实体按钮反过来：浅底深字 */
+  --solid:         #cfd8de;
+  --solid-hover:   #ffffff;
+  --on-solid:      #12161a;
+
+  --gold-veil-1:   rgba(249, 168, 37, .16);
+  --gold-veil-2:   rgba(249, 168, 37, .24);
+  --gold-line:     rgba(249, 168, 37, .46);
+  --gold-ink:      #f0bb5a;
+  --gold-ink-2:    #e5ac4a;
+  --gold-ink-hi:   #f3c470;
+  --gold-glyph:    #f9a825;
+
+  --grass-veil-1:  rgba(134, 193, 104, .14);
+  --grass-veil-2:  rgba(134, 193, 104, .20);
+  --grass-line:    rgba(134, 193, 104, .32);
+
+  --red-veil-1:    rgba(227, 93, 88, .14);
+  --red-veil-2:    rgba(227, 93, 88, .22);
+  --red-line:      rgba(227, 93, 88, .42);
+  --red-ink:       #f08b87;
+
+  --cyan-veil:     rgba(38, 198, 218, .22);
+  --cyan-ink:      #7ce6f2;
+
+  --ion-opacity:   .22;
+  --xp-seam:       rgba(0, 0, 0, .38);
+
+  --face-l:        86%;
+  --face-l-skin:   82%;
+
+  /* 深色底上「发光」要更实一点，否则那一圈光完全看不到 */
+  --enchant-a:     rgba(157, 125, 219, .30);
+  --enchant-b:     rgba(77, 208, 225, .22);
+
+  /* ---- 语义色：色相不动，明度按深底重算 ---- */
+  --diamond:       #4dd0e1;                    /* #26c6da 在深板上约 3.3:1，提一档 */
+  --gold:          #ffc24d;
+  --redstone:      #e35d58;                    /* #c62828 在深板上只有 2.2:1，必须提亮 */
+  --nether:        #9d7ddb;
+  /* --grass-* 三个原样保留：草绿是中亮色，在两种主题下都撑得住 */
+
+  --shadow-pop:  0 28px 64px -30px rgba(0, 0, 0, .80);
+  --shadow-lift: 0 14px 30px -18px rgba(0, 0, 0, .70);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .45), 0 10px 24px -18px rgba(0, 0, 0, .65);
+}
+
+/* 深色底上的半调网点/网格要更淡一点。
+   浅色主题那组值（.075 / .028）在深底上会变成一片可见的脏点 ——
+   上面虽然已经换成白色低透明度，但白点在暗背景上的「可见度」天然更高。
+
+   这里整体再压一档，把叠乘之后的实际值控制在 **1.5%～2%**：
+   远看依然是一块纯色，凑近才能看出 32px 的区块网格 ——
+   那就是「建造 / 合成」的秩序感，多了就成噪点了。
+   网点同时调得比网格线更淡，让「格」压过「点」。 */
+html[data-theme="dark"] body::before { opacity: .5; }
+
+/* 顶部环境光在深色下要更收敛，否则整页顶部会泛出一块灰绿。 */
+html[data-theme="dark"] body::after { filter: blur(22px); opacity: .8; }
+
