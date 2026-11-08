@@ -38,6 +38,8 @@
     // 模组镜像：后台状态与轮询句柄
     mirror: null,
     mirrorPoll: null,
+    // v0.33：启动器页签的数据快照
+    launcher: null,
   };
 
   const TAB_LABELS = {
@@ -49,6 +51,7 @@
     content: "帖子与评论",
     mirror: "模组镜像",
     system: "系统升级",
+    launcher: "启动器",
     adminkeys: "登录密钥",
     admins: "管理员",
   };
@@ -950,6 +953,7 @@
     feedback: renderFeedback,
     content: renderContent,
     mirror: renderMirrorAdmin,
+    launcher: renderLauncher,
     adminkeys: renderAdminkeys,
     admins: renderAdmins,
     system: renderSystem,
@@ -2192,6 +2196,296 @@
   }
 
   /* ============================================================
+     启动器（v0.33）
+     ------------------------------------------------------------
+     桌面上那个程序不是网页，但「它听不听站长的话」全靠这一页：
+
+       · 版本发布 —— 最新版本号、下载地址、是否强制更新
+       · 功能开关 —— 关掉一项，客户端上那个入口立刻变灰
+       · 公告     —— 打开启动器就能看到的一句话
+       · 使用统计 —— 装了多少台、每天启动几次、都用的哪个版本
+
+     ！所有写操作都要求「启动器管理」的 manage 权限；按钮画不画只是
+       少让人踩一次 403，真正拦人的是后端那条 require_area。
+     ============================================================ */
+
+  const LAUNCHER_LEVELS = { info: "普通", warn: "提醒", critical: "重要" };
+
+  function fmtDuration(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    const hours = Math.floor(total / 3600);
+    if (hours >= 1000) return `${(hours / 1000).toFixed(1)}k 小时`;
+    if (hours >= 1) return `${hours} 小时`;
+    return `${Math.round(total / 60)} 分钟`;
+  }
+
+  /* 按天柱状图。
+     ！用纯 div 画，不引图表库 —— 这个项目零依赖，为一个 14 根柱子
+       的图去引一份 100KB 的图表库不值得，而且 CSP 也不允许外链脚本。 */
+  function launcherDailyChart(daily) {
+    if (!daily || !daily.length) {
+      return `<p class="hint">还没有数据。启动器联网跑一次之后，这里会出现按天的柱状图。</p>`;
+    }
+    const max = Math.max(1, ...daily.map((row) => Math.max(row.launches, row.starts)));
+    return `
+      <div class="row" style="align-items:flex-end;gap:.35rem;height:120px;overflow-x:auto;padding-top:.4rem">
+        ${daily.map((row) => {
+          const value = Math.max(row.launches, row.starts);
+          const height = Math.round((value / max) * 100);
+          return `
+            <div style="flex:1 0 1.6rem;display:flex;flex-direction:column;
+                        align-items:center;justify-content:flex-end;height:100%"
+                 title="${esc(row.day)} · 启动 ${Number(row.launches)} 次 · ${Number(row.devices)} 台设备">
+              <span class="hint" style="font-size:.6rem">${value || ""}</span>
+              <div style="width:100%;height:${Math.max(height, 2)}%;background:var(--iris);
+                          border-radius:2px 2px 0 0"></div>
+              <span class="hint" style="font-size:.58rem">${esc(String(row.day).slice(5))}</span>
+            </div>`;
+        }).join("")}
+      </div>`;
+  }
+
+  function launcherDist(title, items, unit) {
+    if (!items || !items.length) return "";
+    const total = items.reduce((sum, item) => sum + Number(item.count || 0), 0) || 1;
+    return `
+      <div>
+        <h3 style="margin:.4rem 0 .5rem;font-size:.95rem">${esc(title)}</h3>
+        ${items.map((item) => {
+          const percent = Math.round((Number(item.count || 0) / total) * 100);
+          return `
+            <div style="margin-bottom:.45rem">
+              <div class="row" style="justify-content:space-between;gap:.5rem">
+                <span class="hint">${esc(item.name)}</span>
+                <span class="hint">${Number(item.count)} ${esc(unit)} · ${percent}%</span>
+              </div>
+              <div style="height:6px;border-radius:3px;background:var(--line);overflow:hidden">
+                <span style="display:block;height:100%;width:${percent}%;background:var(--iris)"></span>
+              </div>
+            </div>`;
+        }).join("")}
+      </div>`;
+  }
+
+  function drawLauncher() {
+    const data = State.launcher;
+    const view = $("#admin-view");
+    if (!data || !view) return;
+
+    const manage = can("launcher", "manage");
+    const locked = manage ? "" : 'disabled title="需要「启动器管理」的能改权限"';
+    const settings = data.settings || {};
+    const stats = data.stats || {};
+
+    const cards = [
+      ["安装设备", Number(stats.devices || 0)],
+      ["7 日活跃", Number(stats.active_7d || 0)],
+      ["累计启动", Number(stats.launches || 0)],
+      ["累计时长", fmtDuration(stats.play_seconds)],
+    ];
+
+    const featureRows = (data.features || []).map((item) => `
+      <label class="check-line" style="display:flex;gap:.6rem;align-items:flex-start;padding:.45rem 0">
+        <input type="checkbox" data-launcher-feature="${esc(item.key)}"
+               ${item.enabled ? "checked" : ""} ${locked}>
+        <span>
+          <b>${esc(item.name)}</b>
+          <span class="hint" style="display:block">${esc(item.desc)}</span>
+        </span>
+      </label>`).join("");
+
+    const releaseRows = (data.releases || []).length
+      ? data.releases.map((row) => `
+        <div class="admin-row">
+          <div class="body">
+            <span class="title">
+              <b>v${esc(row.version)}</b>
+              <span class="tag">${esc(row.channel)}</span>
+              ${Number(row.forced) ? `<span class="tag tag--warn">强制更新</span>` : ""}
+              ${Number(row.active) ? "" : `<span class="tag">已下线</span>`}
+            </span>
+            <span class="meta">${fmtRelative(row.created_at)}${row.url
+              ? ` · ${esc(row.url)}` : " · <b>没填下载地址</b>"}</span>
+            ${row.notes ? `<div class="detail">${esc(row.notes)}</div>` : ""}
+          </div>
+          <div class="actions">
+            <button class="btn btn-danger btn-sm" data-admin-action="launcher-release-delete"
+                    data-lid="${row.id}" data-version="${esc(row.version)}" ${locked}>删除</button>
+          </div>
+        </div>`).join("")
+      : `<div class="empty"><span class="glyph">⬡</span><p>还没有发布过版本</p>
+           <p class="hint">填好下面的表单，点「发布」。</p></div>`;
+
+    const noticeRows = (data.notices || []).length
+      ? data.notices.map((row) => `
+        <div class="admin-row">
+          <div class="body">
+            <span class="title">
+              <b>${esc(row.title)}</b>
+              <span class="tag ${row.level === "critical" ? "tag--warn" : ""}">
+                ${esc(LAUNCHER_LEVELS[row.level] || row.level)}</span>
+              ${Number(row.active) ? `<span class="status-dot">上线中</span>`
+                                   : `<span class="status-dot status-dot--off">已下线</span>`}
+            </span>
+            ${row.body ? `<div class="detail">${esc(row.body)}</div>` : ""}
+            <span class="meta">${fmtRelative(row.created_at)}${row.created_by
+              ? ` · ${esc(row.created_by)}` : ""}</span>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost btn-sm" data-admin-action="launcher-notice-toggle"
+                    data-nid="${row.id}" data-on="${Number(row.active) ? "1" : "0"}" ${locked}>
+              ${Number(row.active) ? "下线" : "上线"}</button>
+            <button class="btn btn-danger btn-sm" data-admin-action="launcher-notice-delete"
+                    data-nid="${row.id}" ${locked}>删除</button>
+          </div>
+        </div>`).join("")
+      : `<p class="hint">没有公告。启动器上会显示「暂无公告」。</p>`;
+
+    const clients = (data.clients && data.clients.items) || [];
+    const clientRows = clients.length
+      ? clients.map((row) => `
+        <div class="admin-row">
+          <div class="body">
+            <span class="title">
+              <b>${esc(String(row.device_id).slice(0, 10))}…</b>
+              <span class="tag">${esc(row.os || "未知")}${row.arch ? ` / ${esc(row.arch)}` : ""}</span>
+              ${row.user_name ? `<span class="tag tag--iris">@${esc(row.user_name)}</span>` : ""}
+            </span>
+            <span class="meta">v${esc(row.app_version || "?")}
+              · 启动 ${Number(row.launch_count)} 次
+              · 玩了 ${fmtDuration(row.play_seconds)}
+              · 最后出现 ${fmtRelative(row.last_seen)}</span>
+          </div>
+        </div>`).join("")
+      : `<p class="hint">还没有设备联网过。</p>`;
+
+    view.innerHTML = `
+      <div class="stack">
+        <div class="stat-grid">
+          ${cards.map(([label, value]) => `
+            <div class="stat-card"><b>${value}</b><span>${esc(label)}</span></div>`).join("")}
+        </div>
+
+        ${settings.maintenance ? `<div class="notice notice--warn">
+            <b>维护模式已开启。</b>启动器会显示维护提示，但不会阻止用户进游戏。
+          </div>` : ""}
+        ${data.ms_login_available ? "" : `<div class="notice notice--warn">
+            <b>服务器还没有配置微软应用凭据。</b>启动器上的「微软正版登录」会显示为不可用，
+            离线账号不受影响。在服务器的 <code>.env</code> 里填 <code>MCFR_MS_CLIENT_ID</code> 后重启即可。
+          </div>`}
+
+        <h2 class="section-title"><span>更新与版本</span><span class="rule"></span></h2>
+        <div class="panel">
+          <p class="hint">
+            客户端每次启动都会问一次「最新版本是多少」。低于<b>最低可用版本</b>，
+            或者当前最新版本被标成<b>强制更新</b>时，启动器会拦住用户，让他先更新。
+          </p>
+          <div class="row" style="gap:.6rem;flex-wrap:wrap;align-items:flex-end">
+            <label class="field" style="flex:1 1 8rem"><span>版本号</span>
+              <input class="input" id="launcher-release-version" placeholder="0.2.0" ${locked}></label>
+            <label class="field" style="flex:0 0 7rem"><span>渠道</span>
+              <select class="select" id="launcher-release-channel" ${locked}>
+                <option value="stable">stable</option>
+                <option value="beta">beta</option>
+              </select></label>
+            <label class="field" style="flex:2 1 14rem"><span>下载地址</span>
+              <input class="input" id="launcher-release-url" placeholder="https://…/mcfr-launcher-0.2.0.exe" ${locked}></label>
+          </div>
+          <label class="field"><span>更新说明</span>
+            <textarea class="input" id="launcher-release-notes" rows="3"
+                      placeholder="这一版改了什么" ${locked}></textarea></label>
+          <label class="check-line" style="margin:.4rem 0">
+            <input type="checkbox" id="launcher-release-forced" ${locked}>
+            <span>强制更新（低于这个版本的客户端会被拦住）</span>
+          </label>
+          <button class="btn btn-primary" data-admin-action="launcher-release-add" ${locked}>发布</button>
+        </div>
+        <div class="panel panel--flush">${releaseRows}</div>
+
+        <h2 class="section-title"><span>功能模块</span><span class="rule"></span></h2>
+        <div class="panel">
+          <p class="hint">关掉某一项之后，启动器上对应的入口会变灰并写明「已由管理员停用」。改完记得保存。</p>
+          ${featureRows || `<p class="hint">没有可开关的模块。</p>`}
+          <button class="btn btn-primary" data-admin-action="launcher-save-features" ${locked}
+                  style="margin-top:.6rem">保存功能开关</button>
+        </div>
+
+        <h2 class="section-title"><span>运行策略</span><span class="rule"></span></h2>
+        <div class="panel">
+          <label class="check-line" style="margin-bottom:.6rem">
+            <input type="checkbox" id="launcher-maint" ${settings.maintenance ? "checked" : ""} ${locked}>
+            <span>维护模式（启动器顶部显示提示）</span>
+          </label>
+          <label class="field"><span>维护 / 提示语</span>
+            <textarea class="input" id="launcher-message" rows="2" ${locked}
+              >${esc(settings.message || "")}</textarea></label>
+          <div class="row" style="gap:.6rem;flex-wrap:wrap">
+            <label class="field" style="flex:1 1 9rem"><span>最低可用版本</span>
+              <input class="input" id="launcher-min-version" value="${esc(settings.min_version || "")}"
+                     placeholder="留空 = 不限制" ${locked}></label>
+            <label class="field" style="flex:0 0 9rem"><span>配置刷新间隔（秒）</span>
+              <input class="input" id="launcher-heartbeat" type="number" min="60" max="3600"
+                     value="${Number(settings.heartbeat_seconds || 600)}" ${locked}></label>
+            <label class="field" style="flex:0 0 8rem"><span>默认渠道</span>
+              <select class="select" id="launcher-channel" ${locked}>
+                <option value="stable" ${settings.channel === "stable" ? "selected" : ""}>stable</option>
+                <option value="beta" ${settings.channel === "beta" ? "selected" : ""}>beta</option>
+              </select></label>
+          </div>
+          <button class="btn btn-primary" data-admin-action="launcher-save-settings" ${locked}>保存</button>
+        </div>
+
+        <h2 class="section-title"><span>公告</span><span class="rule"></span>
+          <span class="eyebrow">最多同时显示 10 条</span></h2>
+        <div class="panel">
+          <div class="row" style="gap:.6rem;flex-wrap:wrap;align-items:flex-end">
+            <label class="field" style="flex:2 1 14rem"><span>标题</span>
+              <input class="input" id="launcher-notice-title" maxlength="80" ${locked}></label>
+            <label class="field" style="flex:0 0 8rem"><span>级别</span>
+              <select class="select" id="launcher-notice-level" ${locked}>
+                <option value="info">普通</option>
+                <option value="warn">提醒</option>
+                <option value="critical">重要</option>
+              </select></label>
+          </div>
+          <label class="field"><span>正文</span>
+            <textarea class="input" id="launcher-notice-body" rows="3"
+                      placeholder="纯文本，支持换行；不支持 HTML" ${locked}></textarea></label>
+          <button class="btn btn-primary" data-admin-action="launcher-notice-add" ${locked}>发布公告</button>
+        </div>
+        <div class="panel panel--flush">${noticeRows}</div>
+
+        <h2 class="section-title"><span>使用情况（最近 14 天）</span><span class="rule"></span></h2>
+        <div class="panel">
+          ${launcherDailyChart(stats.daily)}
+          <div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));margin-top:1rem">
+            ${launcherDist("客户端版本", stats.by_version, "台")}
+            ${launcherDist("操作系统", stats.by_os, "台")}
+          </div>
+          <p class="hint" style="margin-top:.8rem">
+            只统计「启动器自己」的使用情况：设备数、启动次数、游戏时长、版本分布。
+            <b>不记录</b>玩家进了哪个服务器、在服务器里做了什么 ——
+            那是游戏行为，不属于启动器统计的范围。
+          </p>
+        </div>
+
+        <h2 class="section-title"><span>最近联网的设备</span><span class="rule"></span>
+          <span class="eyebrow">共 ${Number((data.clients || {}).total || 0)} 台</span></h2>
+        <div class="panel panel--flush">${clientRows}</div>
+
+        <p class="hint">
+          设备 ID 是启动器首次运行时<b>本地随机生成</b>的，不是硬件指纹。
+          用户删掉启动器的配置目录就会换一个新身份，我们也没法把某个设备钉死在某个真人身上。
+        </p>
+      </div>`;
+  }
+
+  async function renderLauncher() {
+    State.launcher = await api("/api/admin/launcher");
+    drawLauncher();
+  }
+
+  /* ============================================================
      事件
      ============================================================ */
 
@@ -2261,6 +2555,132 @@
           }
           closeModal();
           return;
+
+        /* ---- 启动器 ---- */
+        case "launcher-save-settings": {
+          node.disabled = true;
+          try {
+            const result = await api("/api/admin/launcher/settings", {
+              method: "PUT",
+              body: {
+                maintenance: $("#launcher-maint").checked,
+                message: $("#launcher-message").value,
+                min_version: $("#launcher-min-version").value.trim(),
+                channel: $("#launcher-channel").value,
+                heartbeat_seconds: Number($("#launcher-heartbeat").value),
+              },
+            });
+            toast(result.message, "ok");
+            await renderLauncher();
+          } finally {
+            node.disabled = false;
+          }
+          return;
+        }
+
+        case "launcher-save-features": {
+          // ！逐个读复选框，而不是读某个「表单」。它们分散在同一个面板里，
+          //   用 data-launcher-feature 当唯一来源，加一个模块不用回来改这里。
+          const features = {};
+          $$("[data-launcher-feature]").forEach((box) => {
+            features[box.dataset.launcherFeature] = box.checked;
+          });
+          node.disabled = true;
+          try {
+            const result = await api("/api/admin/launcher/settings", {
+              method: "PUT",
+              body: { features },
+            });
+            toast(result.message, "ok");
+            await renderLauncher();
+          } finally {
+            node.disabled = false;
+          }
+          return;
+        }
+
+        case "launcher-release-add": {
+          const version = $("#launcher-release-version").value.trim();
+          if (!version) {
+            toast("先填版本号，例如 0.2.0", "bad");
+            return;
+          }
+          node.disabled = true;
+          try {
+            const result = await api("/api/admin/launcher/releases", {
+              method: "POST",
+              body: {
+                version,
+                channel: $("#launcher-release-channel").value,
+                url: $("#launcher-release-url").value.trim(),
+                notes: $("#launcher-release-notes").value,
+                forced: $("#launcher-release-forced").checked,
+              },
+            });
+            toast(result.message, "ok");
+            await renderLauncher();
+          } finally {
+            node.disabled = false;
+          }
+          return;
+        }
+
+        case "launcher-release-delete": {
+          const lid = Number(node.dataset.lid || 0);
+          if (!window.confirm(
+            `确定删除版本 v${node.dataset.version || ""} 吗？\n\n` +
+            "已经装了这个版本的用户不受影响，只是它不再作为「最新版本」出现。"
+          )) return;
+          await api(`/api/admin/launcher/releases/${lid}`, { method: "DELETE" });
+          toast("已删除", "ok");
+          await renderLauncher();
+          return;
+        }
+
+        case "launcher-notice-add": {
+          const title = $("#launcher-notice-title").value.trim();
+          if (!title) {
+            toast("公告得有个标题", "bad");
+            return;
+          }
+          node.disabled = true;
+          try {
+            const result = await api("/api/admin/launcher/notices", {
+              method: "POST",
+              body: {
+                title,
+                body: $("#launcher-notice-body").value,
+                level: $("#launcher-notice-level").value,
+              },
+            });
+            toast(result.message, "ok");
+            await renderLauncher();
+          } finally {
+            node.disabled = false;
+          }
+          return;
+        }
+
+        case "launcher-notice-toggle": {
+          const nid = Number(node.dataset.nid || 0);
+          await api(`/api/admin/launcher/notices/${nid}`, {
+            method: "PATCH",
+            body: { active: node.dataset.on !== "1" },
+          });
+          toast(node.dataset.on === "1" ? "已下线" : "已重新上线", "ok");
+          await renderLauncher();
+          return;
+        }
+
+        case "launcher-notice-delete": {
+          if (!window.confirm("确定删除这条公告吗？删掉之后启动器上就看不到了。")) return;
+          await api(`/api/admin/launcher/notices/${Number(node.dataset.nid || 0)}`, {
+            method: "DELETE",
+          });
+          toast("已删除", "ok");
+          await renderLauncher();
+          return;
+        }
 
         /* ---- 模组镜像 ---- */
         case "mirror-sync": {

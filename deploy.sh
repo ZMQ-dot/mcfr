@@ -101,7 +101,11 @@ NGINX_DEFAULT="/etc/nginx/sites-enabled/default"
 RUN_USER="mcfr"
 
 DEFAULT_PORT=8000
-DEFAULT_DOMAIN="pccode.cn"
+# 新域名 mcfr.cn 已备案（豫ICP备2026015409号-2），作为默认值。
+# ！detect_domain() 会优先沿用现有 nginx 配置里的 server_name，
+#   所以这个默认值只在「全新安装」或「nginx 配置不在」时才生效；
+#   老站点要换域名仍然得显式传 --domain mcfr.cn。
+DEFAULT_DOMAIN="mcfr.cn"
 
 # 保留多少份历史备份。
 # ！这个数字敢开到 20，前提是**备份里不含模组镜像**（见「备份配置与数据」一步）。
@@ -144,6 +148,13 @@ SRC_DIR=""                  # 实际使用的源目录，运行时确定
 IMPORT_FROM=""
 ROLLBACK_TS=""
 DRY_RUN=0
+
+# 证书探测的结果：第 10 步（ngi​​nx）填，第 13 步（HTTPS）用。
+# ！先给默认值：脚本开了 set -u，没初始化就在后面的分支里引用会直接报未定义。
+CERT_FULL=""                # 证书链完整路径
+CERT_KEY=""                 # 私钥路径
+CERT_SOURCE="none"           # none / letsencrypt / manual
+SSL_LINES=""                # 拼进 nginx 配置的 443 那几行
 
 # 看门狗：装一个 systemd timer，每 2 分钟检查一次服务，不健康就自动拉起。
 # ！用环境变量而不是命令行开关，是为了不动上面那段 --help 里的开关列表
@@ -953,10 +964,50 @@ step "配置反向代理"
 if [[ $DO_NGINX -eq 0 ]]; then
     dim "跳过 nginx"
 else
+    # ---- 证书探测：有证书就当场写进配置，不再指望 certbot 事后补挂 ----
+    #
+    # ！原来是「第 10 步只写 listen 80，第 13 步让 certbot 把 443 加回来」。
+    #   只要第 13 步失败（国内访问 Let's Encrypt 的 API 经常 ReadTimeout、
+    #   DNS 还没生效、安全组没放行 80），结果就是**把一个本来能用的 HTTPS
+    #   站点降级成纯 HTTP**，而且只在日志里留一句 warn —— 很容易被当成
+    #   「部署成功」。现在改成：证书文件存在就直接写 443，
+    #   certbot 只在「一张证书都没有」时才参与。
+    #
+    # 两处证书目录都认：
+    #   /etc/letsencrypt/live/<域名>/   certbot 签的
+    #   /etc/ssl/<服务名>/               自己放的（阿里云 / 腾讯云的免费证书）
+    if [[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
+        CERT_FULL="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+        CERT_KEY="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+        CERT_SOURCE="letsencrypt"
+    elif [[ -f "/etc/ssl/$SERVICE_NAME/fullchain.pem" && -f "/etc/ssl/$SERVICE_NAME/privkey.pem" ]]; then
+        CERT_FULL="/etc/ssl/$SERVICE_NAME/fullchain.pem"
+        CERT_KEY="/etc/ssl/$SERVICE_NAME/privkey.pem"
+        CERT_SOURCE="manual"
+    else
+        CERT_FULL=""
+        CERT_KEY=""
+        CERT_SOURCE="none"
+    fi
+
+    if [[ -n "$CERT_FULL" ]]; then
+        SSL_LINES="    listen 443 ssl http2;
+    ssl_certificate     $CERT_FULL;
+    ssl_certificate_key $CERT_KEY;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;"
+        info "已找到证书（$CERT_SOURCE），443 直接写进配置"
+    else
+        SSL_LINES=""
+        dim "没有找到证书，本次只配 80"
+    fi
+
     run tee "$NGINX_AVAILABLE" >/dev/null <<NGINX
 # 由 deploy.sh 自动生成，手改会被下次升级覆盖。
 server {
     listen 80;
+$SSL_LINES
     server_name $DOMAIN;
 
     # 皮肤上传够用了
@@ -1020,9 +1071,16 @@ NGINX
         dim "已移除 nginx 默认站点"
     fi
 
-    if ! run nginx -t 2>/dev/null; then
-        die "nginx 配置校验失败，看上面的报错。
-      你现有的配置已经备份在 $BK/nginx-site.conf
+    if ! run nginx -t; then
+        # ！这里必须先把应用拉起来再退出。
+        #   第 4 步已经停过服务了，直接 die 的话站点会一直 502 ——
+        #   而 nginx 自己还在用旧配置跑着，用户看到的就是
+        #   「502 Bad Gateway，但服务器看起来一切正常」。
+        #   （这个坑真踩到了：证书那步失败 → 改 nginx 时校验不过 → 脚本退出
+        #     → 应用停在停着的状态，最后表现成 502。）
+        run systemctl start "$SERVICE_NAME" >/dev/null 2>&1 || true
+        die "nginx 配置校验失败（上面几行就是 nginx 的原话），已把应用重新拉起来。
+      你现有的站点配置备份在 $BK/nginx-site.conf
       恢复：cp $BK/nginx-site.conf $NGINX_AVAILABLE && nginx -t && systemctl reload nginx"
     fi
 
@@ -1112,27 +1170,31 @@ if [[ $DO_HTTPS -eq 0 ]]; then
     dim "已跳过（--no-https，或 certbot 不可用）"
 elif [[ $DO_NGINX -eq 0 || ! -f "$NGINX_AVAILABLE" ]]; then
     dim "没有 nginx 站点可挂，跳过"
-elif [[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
-    # ！这里【不能】只跑 `certbot renew` —— 踩过的坑，后果很隐蔽。
-    #   第 10 步刚把 nginx 站点配置整个重写成纯 HTTP（没有 listen 443），
-    #   所以证书必须重新挂回去。而 `certbot renew` 只处理「快到期」的证书，
-    #   没到期就什么都不做 → 证书文件还在，443 却没人监听。
-    #   更糟的是脚本一路显示成功、结尾还提示你访问 https，实际只会超时。
-    #   （不带 --force-renewal 就是「没到期则重新安装已有证书」，不会重复签发，
-    #     Let’s Encrypt 的速率限制也不会被触发。）
-    info "证书已存在，重新挂到 nginx 上"
-    if run certbot --nginx -d "$DOMAIN" --non-interactive --redirect 2>/dev/null; then
-        ok "HTTPS 已重新启用：https://$DOMAIN"
-    elif run certbot install --nginx -d "$DOMAIN" --cert-name "$DOMAIN" --non-interactive 2>/dev/null; then
-        ok "HTTPS 已重新启用：https://$DOMAIN"
-    else
-        warn "！证书挂不上去。文件在 /etc/letsencrypt/live/$DOMAIN/ 但 nginx 没在用它，"
-        warn "  也就是说 https 打不开。手工修："
-        warn "      sudo certbot --nginx -d $DOMAIN --non-interactive --redirect"
+elif [[ "$CERT_SOURCE" == "manual" ]]; then
+    ok "使用的是自带证书：$CERT_FULL"
+    info "续期：重新申请后覆盖这两个文件，再 sudo systemctl reload nginx"
+    dim "  证书：$CERT_FULL"
+    dim "  私钥：$CERT_KEY"
+elif [[ "$CERT_SOURCE" == "letsencrypt" ]]; then
+    # ！第 10 步已经把 443 和证书路径直接写进配置了，所以这里**不能再跑
+    #   `certbot --nginx`** —— 它会再去改一遍我们自己生成的配置文件
+    #   （重复插 server 块 / 塞一堆 location），而那份文件本该由脚本独占。
+    #   只需要确保证书续期之后 nginx 会被 reload。
+    ok "HTTPS 已就位：https://$DOMAIN"
+
+    # 证书是脚本自己挂进去的，certbot 的 nginx 插件并不知道，
+    # 所以显式装一个 deploy 钩子 —— 否则 renew 成功后 nginx 还在用旧证书。
+    HOOK_DIR="/etc/letsencrypt/renewal-hooks/deploy"
+    if [[ ! -f "$HOOK_DIR/reload-nginx.sh" ]]; then
+        run mkdir -p "$HOOK_DIR"
+        run tee "$HOOK_DIR/reload-nginx.sh" >/dev/null <<'HOOK'
+#!/bin/sh
+systemctl reload nginx
+HOOK
+        run chmod 755 "$HOOK_DIR/reload-nginx.sh"
+        dim "已装续期钩子：$HOOK_DIR/reload-nginx.sh"
     fi
 
-    # 顺带处理真的快到期的情况。失败了也不要紧 —— 上面已经把证书挂好了，
-    # 而且系统里的 certbot 定时任务之后会自动重试。
     run certbot renew --quiet 2>/dev/null || true
 elif [[ ! -d /etc/letsencrypt/accounts && -z "$CERT_EMAIL" ]]; then
     warn "首次申请证书需要邮箱，已跳过。补上：sudo bash $0 --email 你的邮箱"

@@ -72,6 +72,9 @@ AREAS: tuple[tuple[str, str, str], ...] = (
     #   很多时候你想让某个管理员能刷新索引，但不想让他把磁盘塞满。
     ("mirror_sync", "模组：同步索引", "从 Modrinth 拉取热门模组与版本清单"),
     ("mirror_download", "模组：镜像文件", "决定镜像哪些模组，并把文件下载到本站"),
+    # ！v0.33 起的桌面启动器。它不在浏览器里跑，但「谁能改功能开关」
+    #   和站内其它受控模块是同一件事，所以沿用同一套 view / manage 分级。
+    ("launcher", "启动器管理", "发布安装包、开关功能模块、发布公告、查看使用统计"),
 )
 AREA_KEYS: tuple[str, ...] = tuple(key for key, _, _ in AREAS)
 LEVELS: tuple[str, ...] = ("none", "view", "manage")
@@ -85,6 +88,7 @@ AREA_TABS: dict[str, str] = {
     "system": "system",
     "mirror_sync": "mirror",
     "mirror_download": "mirror",
+    "launcher": "launcher",
 }
 
 # 普通管理员永远可用的页签（不需要授权）

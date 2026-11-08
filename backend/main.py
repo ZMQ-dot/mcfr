@@ -20,7 +20,7 @@ from .achievements import catalog
 from .database import DB_PATH, connect, get_db, now_ts
 from .mirror import auto_settings, auto_sync_loop
 from .routers import (
-    admin, auth, captcha, contacts, discover, feedback, media, mirror, posts, users,
+    admin, auth, captcha, contacts, discover, feedback, launcher, media, mirror, posts, users,
 )
 from . import age
 from .schemas import EDITIONS, LOOKING_FOR, ONLINE_TIMES, PLAY_STYLES
@@ -285,6 +285,10 @@ app.include_router(media.router)
 app.include_router(mirror.router)
 app.include_router(mirror.admin_router)
 app.include_router(posts.router)
+
+# 桌面启动器（v0.33）：公开侧给客户端，admin_router 给后台「启动器」页签
+app.include_router(launcher.router)
+app.include_router(launcher.admin_router)
 
 
 @app.get("/admin", include_in_schema=False)

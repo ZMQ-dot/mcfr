@@ -132,4 +132,43 @@ load_env()
 #              同一个坑 v0.13（表）和 v0.31（idx_reports_status）各踩过一次，
 #              这是第三次。判据很简单：
 #              **索引的列如果是迁移补的，索引就必须写在 POST_MIGRATION_SQL 里。**
-__version__ = "0.32.1"
+# v0.32.2 起：**主域名由 pccode.cn 换成 mcfr.cn**（备案下来得晚，
+#           新备案号是「豫ICP备2026015409号-2」，旧的是「…号」）。
+#           ① 页脚备案号改成带 -2 的那个，链接仍指向 beian.miit.gov.cn。
+#           ② robots.txt / sitemap.xml 里写死的域名一并换掉 —— 那两处
+#              不改的话，搜索引擎会去旧域名找站点地图，报「读不到」。
+#           ③ deploy.sh 的 DEFAULT_DOMAIN 改成 mcfr.cn。
+#              ！它只在全新安装时生效：detect_domain() 会优先沿用现有
+#                nginx 配置里的 server_name，所以老站换域名仍然要显式传
+#                --domain mcfr.cn。
+#           本次没有任何代码逻辑变化，也不涉及数据库。
+# v0.32.3 起：【修掉「部署可能把 HTTPS 弄丢」的结构性问题】。
+#           原来是第 10 步只写 listen 80、第 13 步让 certbot 把 443 加回来。
+#           国内访问 acme-v02.api.letsencrypt.org 经常 ReadTimeout，
+#           一旦第 13 步失败，一个本来正常的 HTTPS 站点就被降级成纯 HTTP，
+#           而脚本只留一句 warn —— 很容易被当成「部署成功」。
+#           ① 第 10 步先探测证书：/etc/letsencrypt/live/<域名>/ 或 /etc/ssl/mcfr/，
+#              找到就直接把 listen 443 和证书路径写进配置，不再依赖事后补挂。
+#           ② 第 13 步：证书已就位时只装续期钩子（reload nginx）+ renew，
+#              **不再跑 certbot --nginx** —— 那会去改脚本自己生成的配置文件。
+#           ③ 新增「自带证书」支持：把阿里云 / 腾讯云的免费证书放到
+#              /etc/ssl/mcfr/{fullchain.pem,privkey.pem} 即可，完全不走 ACME。
+#              对国内服务器这往往比 Let's Encrypt 可靠得多。
+# v0.32.4 起：修掉 `deploy.sh` 里一个会直接表现为 **502** 的坑。
+#           `nginx -t` 校验失败时脚本会 `die`，但第 4 步已经把服务停掉了 ——
+#           应用就永久留在「停着」的状态，而 nginx 还在用旧配置正常跑，
+#           于是外部看到的是「502 Bad Gateway，但服务器一切正常、CPU 也不高」。
+#           ① 校验失败时先把应用拉起来再退出。
+#           ② `nginx -t` 的 stderr 不再丢进 /dev/null —— 以前用户看不到
+#              到底哪一行配置错了，只看到一句「校验失败」。
+# v0.33.0 起：【桌面启动器有了服务端】。三件事一起做的：
+#           ① 微软正版登录改由服务器代办。client_id / 租户 ID 从启动器里
+#              **彻底移除**（以前是加密后打进程序，密钥也在程序里 —— 那只是
+#              「不显眼」），现在只存在于服务器的 .env。启动器只拿一个 flow_id，
+#              真正的设备码与令牌从不离开服务器。见 backend/launcher.py。
+#           ② 后台新增「启动器」页签：发布版本（含强制更新线）、逐个功能开关、
+#              公告、使用统计（设备数 / 启动次数 / 时长 / 版本与系统分布）。
+#           ③ 新表 5 张：launcher_releases / launcher_notices / launcher_clients /
+#              launcher_events / launcher_ms_flows。统计只到「设备 + 次数」，
+#              不记录玩家进了哪个服务器 —— 那是游戏行为，不属于启动器统计。
+__version__ = "0.33.0"

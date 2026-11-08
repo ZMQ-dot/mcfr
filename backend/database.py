@@ -579,6 +579,116 @@ CREATE INDEX IF NOT EXISTS idx_post_shares_from    ON post_shares(from_user);
 --   已有的 idx_posts_author(author_id, created_at) 能直接用；
 --   评论那边只有 (post_id, status, created_at)，开头是 post_id，用不上。
 CREATE INDEX IF NOT EXISTS idx_post_comments_user ON post_comments(user_id, created_at DESC);
+
+-- ===========================================================================
+-- 启动器（v0.33 起）
+--
+-- 桌面启动器是站外程序，但它的「发布版本 / 功能开关 / 公告 / 使用统计」
+-- 全部落在站点这一侧，由后台管理。启动器本身不带任何凭据。
+--
+-- ！这张表只存「一个版本发布了」这个事实，文件本身请放到对象存储 / 静态下载，
+--   url 指向它即可。把几十 MB 的安装包塞进 SQLite 会让每次备份都变慢十倍。
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS launcher_releases (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    version        TEXT    NOT NULL,
+    -- stable | beta。客户端默认只看 stable
+    channel        TEXT    NOT NULL DEFAULT 'stable',
+    notes          TEXT    NOT NULL DEFAULT '',
+    url            TEXT    NOT NULL DEFAULT '',
+    sha256         TEXT    NOT NULL DEFAULT '',
+    byte_size      INTEGER NOT NULL DEFAULT 0,
+    -- 1 = 这个版本必须更新（低于它就拦住，不让进主界面）
+    forced         INTEGER NOT NULL DEFAULT 0,
+    active         INTEGER NOT NULL DEFAULT 1,
+    created_at     INTEGER NOT NULL,
+    UNIQUE (channel, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_launcher_releases_live
+    ON launcher_releases(active, channel, created_at DESC);
+
+-- 公告：标题 + 正文，带生效时间窗。
+-- ！正文是纯文本，客户端按行渲染，不支持 HTML —— 启动器不是浏览器，
+--   允许 HTML 就等于给「谁能发公告」这个权限加了一条 XSS 的口子。
+CREATE TABLE IF NOT EXISTS launcher_notices (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT    NOT NULL,
+    body       TEXT    NOT NULL DEFAULT '',
+    -- info | warn | critical
+    level      TEXT    NOT NULL DEFAULT 'info',
+    active     INTEGER NOT NULL DEFAULT 1,
+    starts_at  INTEGER NOT NULL DEFAULT 0,
+    ends_at    INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    created_by TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_launcher_notices_live
+    ON launcher_notices(active, created_at DESC);
+
+-- 安装过启动器的设备。
+-- ！device_id 是客户端首次运行时**本地随机生成**的 UUID，不是硬件指纹：
+--   我们不收集 MAC / 硬盘序列号 / 主机名，删掉 userData 就换一个新身份。
+--   这样「使用统计」能看趋势，但没法把某个设备钉死在某个真人身上 ——
+--   面向未成年人做统计，这条线必须画清楚。
+CREATE TABLE IF NOT EXISTS launcher_clients (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id    TEXT    NOT NULL UNIQUE,
+    os           TEXT    NOT NULL DEFAULT '',
+    arch         TEXT    NOT NULL DEFAULT '',
+    app_version  TEXT    NOT NULL DEFAULT '',
+    mc_version   TEXT    NOT NULL DEFAULT '',
+    loader       TEXT    NOT NULL DEFAULT '',
+    -- 启动器里登录了 mcfr 账号就顺手关联上；没登录就是 NULL。
+    -- ！注销账号不删设备行（统计要连续），只把关联断掉。
+    user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    first_seen   INTEGER NOT NULL,
+    last_seen    INTEGER NOT NULL,
+    launch_count INTEGER NOT NULL DEFAULT 0,
+    play_seconds INTEGER NOT NULL DEFAULT 0,
+    last_ip      TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_launcher_clients_seen ON launcher_clients(last_seen DESC);
+
+-- 事件流水：用来画「最近 14 天每天有多少人启动、启动了多少次」。
+-- ！只保留粗粒度事件（start / launch / exit），不记录玩了哪个服务器、
+--   玩了多久的明细 —— 那是玩家的游戏行为，不属于「启动器使用统计」。
+CREATE TABLE IF NOT EXISTS launcher_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id  TEXT    NOT NULL,
+    kind       TEXT    NOT NULL,
+    detail     TEXT    NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_launcher_events_time ON launcher_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_launcher_events_kind ON launcher_events(kind, created_at DESC);
+
+-- 微软设备码登录的会话（v0.33）。
+--
+-- ！微软的 client_id / 租户 ID 只存在于**服务器**，启动器一个都不知道。
+--   客户端只拿到 flow_id（32 字节随机十六进制），拿它来轮询结果；
+--   真正的 device_code / access_token 从不离开这台服务器。
+--   flow_id 本身就是凭证，所以它必须足够长、且一次登录就作废。
+CREATE TABLE IF NOT EXISTS launcher_ms_flows (
+    id          TEXT PRIMARY KEY,
+    device_id   TEXT    NOT NULL DEFAULT '',
+    authority   TEXT    NOT NULL DEFAULT '',
+    user_code   TEXT    NOT NULL DEFAULT '',
+    device_code TEXT    NOT NULL DEFAULT '',
+    -- pending | done | error
+    status      TEXT    NOT NULL DEFAULT 'pending',
+    interval_s  INTEGER NOT NULL DEFAULT 5,
+    expires_at  INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL,
+    last_poll   INTEGER NOT NULL DEFAULT 0,
+    result      TEXT    NOT NULL DEFAULT '',
+    error       TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_launcher_flows_expire ON launcher_ms_flows(expires_at);
 """
 
 # 这些索引依赖 migrate() 补上的新列，所以必须在补列之后再执行
