@@ -268,15 +268,41 @@ html { -webkit-tap-highlight-color: transparent; }
 }
 
 /* ！单列网格要写 minmax(0, 1fr)，不能写 1fr。
-   app.css 在 760px 以下把 .peer-grid 改成了 1fr，但 1fr 等价于
-   minmax(auto, 1fr) —— 那个 auto 是「不小于内容的最小宽度」。
-   同类卡片里有一整排不换行的按钮（申请交换联系方式 / 资料 / ✕），
-   它的最小宽度是 306px；320px 的手机留给网格的只有 288px，
-   于是整列被撑到 306，页面多出 2px 横向滚动。
+   app.css 里 .peer-grid 现在**本来就是单列**（玩家卡是通栏大卡），
+   但这条必须留着：1fr 等价于 minmax(auto, 1fr)，那个 auto 是
+   「不小于内容的最小宽度」。卡片里有一整排不换行的按钮
+   （申请交换联系方式 / 资料 / ✕），最小宽度 306px；320px 的手机
+   留给网格的只有 288px —— 整列会被撑到 306，页面多出 2px 横向滚动。
    minmax(0, 1fr) 才是真的「有多少用多少」。
    ！以后再加单列网格，默认就该用这个写法。 */
 @media (max-width: 760px) {
   .peer-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 玩家卡在窄屏上换成上下两段：照片栏横过来（头像 + 等级并排），正文接在下面。
+   ！104px 的头像在 320px 的屏上单独占一列，右边只剩 150px 给名字和动作按钮，
+     三个按钮会挤成两行。竖排比「硬撑成两列」好读得多。 */
+@media (max-width: 620px) {
+  .peer-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: .7rem;
+    padding: .8rem;
+  }
+  .peer-face {
+    grid-template-columns: auto auto auto auto;
+    align-items: center;
+    justify-items: start;
+    gap: .55rem;
+    min-width: 0;
+    padding: 0 0 .7rem;
+    border-right: 0;
+    border-bottom: 2px solid var(--line);
+  }
+  .peer-state { margin-left: auto; }
+  .peer-lv-title { text-align: left; }
+  .peer-id b { font-size: 1rem; }
+  .peer-actions { flex-wrap: wrap; }
+  .peer-actions .btn { flex: 1 1 auto; }
 }
 
 /* 登录卡片右上角那团装饰光斑（.orb）是按「卡片右边还有一整栏」设计的 ——

@@ -230,16 +230,34 @@
   --font-pixel: "Press Start 2P", var(--font-mono);
 
   /* ---- 圆角与阴影 ----
-     亮色主题的阴影必须轻：深色主题那种 rgba(0,0,0,.9) 的大黑影放在白底上
-     会变成一坨脏灰，看起来像没对齐的浮层。 */
-  --r-sm: 6px;
-  --r-md: 12px;
-  --r-lg: 18px;
-  --r-pill: 999px;
+     v0.38 起这套东西换了性格：**直角**。
+     方块游戏的界面里没有「柔和的圆」，一块石头切出来的边就是 90°。
+     所以圆角收到 0–4px（只为一像素的抗锯齿留一点余地，不是为了让角变圆），
+     阴影也从「高斯模糊的浮起感」换成**硬投影** —— 偏移 2–6px、零模糊，
+     像贴纸揭起来一层，而不是飘在空中的玻璃。
 
-  --shadow-pop:  0 24px 60px -28px rgba(30, 35, 40, .30);
-  --shadow-lift: 0 12px 28px -18px rgba(30, 35, 40, .24);
-  --shadow-card: 0 1px 2px rgba(30, 35, 40, .05), 0 10px 24px -18px rgba(30, 35, 40, .22);
+     ！--r-pill 现在也是 2px：全站的胶囊（顶栏账号、搜索框、标签）
+       一并变成方块。想单独保留一个胶囊的地方必须自己写 999px。 */
+  --r-sm: 2px;
+  --r-md: 3px;
+  --r-lg: 4px;
+  --r-pill: 2px;
+
+  /* 硬投影的墨色。亮色主题要够淡，否则白底上会像一圈脏边。 */
+  --slab:        rgba(30, 35, 40, .16);
+  --slab-deep:   rgba(30, 35, 40, .26);
+  /* 界面件的实心描边。
+     ！别拿 --line-strong 当 2px 描边用：它是给 1px 分隔线配的浓度（.18），
+       放大到 2px 之后在白底上仍然只像一条浅灰线，一整页看下来就是
+       「一堆没做样式的输入框」。方块游戏的边框是**实心**的，比背景深一档。 */
+  --edge:        rgba(30, 35, 40, .34);
+  /* 立体边框：左上受光、右下背光。这是 MC 全部界面件共用的那一层厚度。 */
+  --bevel-hi:    rgba(255, 255, 255, .80);
+  --bevel-lo:    rgba(30, 35, 40, .14);
+
+  --shadow-pop:  6px 6px 0 var(--slab-deep);
+  --shadow-lift: 4px 4px 0 var(--slab);
+  --shadow-card: 3px 3px 0 var(--slab);
 
   /* ---- 缓动与时长 ----
      设计文档要求动效 150–250ms、ease-out、短而克制，所以把时长收成三档，
@@ -313,6 +331,16 @@ body::after {
     radial-gradient(34rem 24rem at 86% 4%, var(--glow-b), transparent 66%);
   filter: blur(14px);
 }
+
+/* ---- v0.38：除了「跟随时间」，整页退回纯背景色 ----
+   ！上面那两层（网点/区块网格 + 顶部绿雾）是「氛围」，而氛围一旦成为
+     每一页的默认底色，就会变成那种一眼看得出用模板糊出来的质感。
+     所以它们只在 html[data-sky="time"] 时存在 —— 那时它们属于「光」的一部分，
+     和天幕、光柱、影子一起随时间变化；其余三档（跟随系统 / 浅色 / 深色）
+     就是一块干净的颜色，什么都不叠。
+   用 display: none 而不是 opacity: 0：不必让浏览器保留两层全屏合成层。 */
+html:not([data-sky="time"]) body::before,
+html:not([data-sky="time"]) body::after { display: none; }
 
 /* =========================================================================
    天光（v0.35 / v0.36）：跟随时间的主题、天色与光影
@@ -570,7 +598,7 @@ html.is-shading *:not(.sky__layer):not(#night-veil):not(.light):not(#light-shade
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb {
   background: var(--scroll);
-  border-radius: 99px;
+  border-radius: 0;
   border: 2px solid transparent;
   background-clip: content-box;
 }
@@ -598,14 +626,13 @@ p { margin: 0; }
 .display-lg { font-size: clamp(1.65rem, 3.4vw, 2.35rem); }
 .display-md { font-size: clamp(1.3rem, 2.2vw, 1.6rem); }
 
-/* 大标题的绿色强调片段（取的是草方块上的那撮绿） */
-.iris-text {
-  background: var(--iris-strong);
-  -webkit-background-clip: text;
-          background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-}
+/* 大标题的绿色强调片段（取的是草方块上的那撮绿）
+   ！v0.38 去掉了 background-clip + 渐变。那套写法确实好看，但它有两个副作用：
+     一、渐变文字是全站最「AI 生成感」的一处装饰，跟方块的性格不合；
+     二、-webkit-text-fill-color: transparent 会让选中、打印、高对比度模式
+         都拿不到颜色 —— 无障碍上是一处真实的亏。
+     现在就是一块实心绿：同样的强调，读得出、选得中、印得出来。 */
+.iris-text { color: var(--grass); }
 
 .eyebrow {
   font-size: .688rem;
@@ -614,12 +641,7 @@ p { margin: 0; }
   text-transform: uppercase;
   color: var(--muted);
 }
-.eyebrow--iris {
-  background: var(--iris-strong);
-  -webkit-background-clip: text;
-          background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
+.eyebrow--iris { color: var(--grass); }
 
 .lede { color: var(--text-soft); max-width: 48ch; }
 .muted { color: var(--muted); }
@@ -664,9 +686,17 @@ p { margin: 0; }
 }
 .iris-rule--v { width: 2px; height: auto; align-self: stretch; border-radius: 2px; }
 
+/* v0.38：这团高斯模糊的绿光斑整块关掉。
+   它是「AI 落地页」的招牌装饰 —— 一团没有信息量的柔光漂在卡片角上，
+   唯一的用途是让空白处不空。现在登录卡片靠 2px 描边、直角和一块实心绿
+   撑住画面，不需要有东西在发亮。
+   ！保留 .orb 这个类而不是从 HTML 里删掉：登录页、后台页各引用了一次，
+     直接删元素会让那两处的布局基准（绝对定位的偏移）一起变。
+     这里只让它不显示，DOM 结构不动。 */
 .orb {
   position: absolute;
-  border-radius: 50%;
+  display: none;
+  border-radius: 0;
   pointer-events: none;
   filter: blur(26px);
   opacity: .5;
@@ -687,9 +717,11 @@ p { margin: 0; }
     linear-gradient(var(--pixel-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--pixel-line) 1px, transparent 1px);
   background-size: auto, 8px 8px, 8px 8px;
-  border: 1px solid var(--line);
+  /* v0.38：描边从 1px 换成 2px。1px 是「卡片边框」，2px 是「一块板」——
+     方块游戏的界面件都是 2 的倍数，这条线一加粗，整页的重心就落下来了。 */
+  border: 2px solid var(--edge);
   border-radius: var(--r-md);
-  box-shadow: var(--shadow-card);
+  box-shadow: inset 1px 1px 0 var(--bevel-hi), var(--shadow-card);
   /* 这里原来有 backdrop-filter: blur(14px)，现已移除，原因有两个：
      一、背景本来就不透明，模糊最多只能影响图标边缘那点像素；
      二、背景的离子画布每帧都在变，留着 blur 等于每帧都对一大片区域重算高斯模糊，
@@ -707,15 +739,16 @@ p { margin: 0; }
 }
 .panel--pad { padding: 1.4rem; }
 
-/* 悬停时浮现绿色描边（Aether 的 edge-lit border） */
+/* 悬停时浮现绿色描边（Aether 的 edge-lit border）。
+   v0.38：2px 实心绿，不再是「渐变 + 1px 发丝」。方块世界里没有发光发丝线。 */
 .edge { position: relative; isolation: isolate; }
 .edge::before {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  padding: 1px;
-  background: var(--iris);
+  padding: 2px;
+  background: var(--grass);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
           mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
@@ -746,38 +779,49 @@ p { margin: 0; }
   letter-spacing: .04em;
   color: var(--text);
   background: var(--tint-1);
-  border: 1px solid var(--line-strong);
+  border: 2px solid var(--edge);
   border-radius: var(--r-sm);
   cursor: pointer;
   white-space: nowrap;
+  /* 立体感来自两条内阴影（左上亮、右下暗）+ 一条硬投影，
+     而不是往外发光的阴影。按下时投影消失、整体挪 2px —— 真的按进去了一块。 */
+  box-shadow: inset 1px 1px 0 var(--bevel-hi), inset -1px -1px 0 var(--bevel-lo),
+              2px 2px 0 var(--slab);
   transition: background var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease),
-              transform var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+              transform var(--dur-1) var(--ease), color var(--dur-1) var(--ease),
+              box-shadow var(--dur-1) var(--ease);
 }
 .btn:hover:not(:disabled) {
   background: var(--tint-2);
   border-color: var(--line-iris);
-  /* 两侧的竖线：像素化的光晕，而不是模糊辉光 */
-  box-shadow: -2px 0 0 -1px rgba(107, 168, 79, .5), 2px 0 0 -1px rgba(107, 168, 79, .38);
+  box-shadow: inset 1px 1px 0 var(--bevel-hi), inset -1px -1px 0 var(--bevel-lo),
+              3px 3px 0 var(--slab);
 }
-.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: inset 1px 1px 0 var(--bevel-lo), inset -1px -1px 0 var(--bevel-hi);
+}
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 /* 焦点环用钻石青 —— 设计文档里「焦点 / 交互」归它管。
    草绿是品牌色，用它做焦点环会和「积极操作」的按钮混在一起，分不出来。 */
 .btn:focus-visible { outline: 2px solid var(--diamond); outline-offset: 2px; }
 
-/* 主按钮：静息为绿色描边，悬停时整块被绿色填满 */
+/* 主按钮：v0.38 起静息就是实心草绿（MC 里那个「确定」的样子）。
+   ！原来的做法是「静息只有一圈渐变描边、悬停才填色」，在白底上太轻，
+     一眼看过去和 ghost 按钮分不出主次；现在把主次写在静息态里。 */
 .btn-primary {
-  color: var(--text);
-  background:
-    linear-gradient(var(--panel-raised), var(--panel-raised)) padding-box,
-    var(--iris) border-box;
-  border: 1px solid transparent;
+  color: var(--on-grass);
+  background: var(--grass);
+  border-color: var(--grass-deep);
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, .28), inset -1px -1px 0 rgba(0, 0, 0, .22),
+              2px 2px 0 var(--slab);
 }
 .btn-primary:hover:not(:disabled) {
   color: var(--on-grass);
-  background: var(--iris);
-  border-color: transparent;
-  box-shadow: 0 8px 20px -12px rgba(77, 127, 56, .7);
+  background: var(--grass-light);
+  border-color: var(--grass-deep);
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, .30), inset -1px -1px 0 rgba(0, 0, 0, .22),
+              3px 3px 0 var(--slab);
 }
 
 .btn-solid {
@@ -1356,9 +1400,17 @@ html[data-theme="dark"] {
   --nether:        #9d7ddb;
   /* --grass-* 三个原样保留：草绿是中亮色，在两种主题下都撑得住 */
 
-  --shadow-pop:  0 28px 64px -30px rgba(0, 0, 0, .80);
-  --shadow-lift: 0 14px 30px -18px rgba(0, 0, 0, .70);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, .45), 0 10px 24px -18px rgba(0, 0, 0, .65);
+  /* 深色下的硬投影反过来要**够黑**：深灰底上一点点灰投影看不出来。
+     用纯黑的低透明度，别用 rgba(30,35,40) —— 那在 #1e2328 的板子上等于没有。 */
+  --slab:        rgba(0, 0, 0, .55);
+  --slab-deep:   rgba(0, 0, 0, .72);
+  --edge:        rgba(255, 255, 255, .22);
+  --bevel-hi:    rgba(255, 255, 255, .10);
+  --bevel-lo:    rgba(0, 0, 0, .38);
+
+  --shadow-pop:  6px 6px 0 var(--slab-deep);
+  --shadow-lift: 4px 4px 0 var(--slab);
+  --shadow-card: 3px 3px 0 var(--slab);
 }
 
 /* 深色底上的半调网点/网格要更淡一点。

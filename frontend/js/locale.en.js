@@ -621,4 +621,7 @@ window.McfrI18n.add("en", {
   "连不上服务器": "Can't reach the server",
   "正在连接…": "Connecting…",
   "{} 人在线 · 共 {} 位同好": "{} online · {} members",
+  /* ---- v0.38 侧栏与在线状态 ---- */
+  "菜单": "Menu",
+  "离线": "Offline",
 });

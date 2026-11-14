@@ -700,6 +700,10 @@
     paintServerStatus();
   }
 
+  /* 侧栏：游戏内的 Tab 条（v0.38）。
+     ！不再往每个格子前面插 SVG 图标 —— 文字本身已经说清去处，
+       再配一排统一粗细的线条图标，正是「通用后台模板」的样子。
+       选中态也不靠一条彩色横线，而是把那一格**按进去**（见 app.css）。 */
   function renderNav() {
     const stats = State.overview?.stats || {};
     const items = NAV.map((item) => {
@@ -710,14 +714,13 @@
           : "";
       return `
         <button class="nav-item" data-nav="${item.key}" aria-current="${State.view === item.key}">
-          <span class="nav-icon">${McfrIcons.nav(item.key)}</span>
           <span>${item.label}</span>
           ${badge}
         </button>`;
     }).join("");
 
     $("#sidenav").innerHTML = `
-      <span class="eyebrow" style="padding:0 .8rem .5rem">导航</span>
+      <span class="eyebrow nav-eyebrow">菜单</span>
       ${items}
       <div class="nav-foot">
         <div class="server-status" id="server-status" data-state="wait" role="status" aria-live="polite"></div>
@@ -885,43 +888,56 @@
     return parts.join("");
   }
 
+  /* 玩家卡：单列大卡（v0.38）。
+     ！结构从「一块方形卡」改成了「照片栏 + 正文栏」两列：
+       左列只放身份（头像、等级、在线），右列只放判断依据（标签、理由、自述）。
+       这样扫一眼的路径是固定的：先认人，再看合不合得来。
+       不要再往回加图标或装饰 —— 这一栏要的是密度，不是漂亮。 */
   function peerCard(user) {
     const score = user.score_info || { score: 0, reasons: [] };
     const reasons = score.reasons || [];
     const styles = (user.play_styles || []).slice(0, 3);
+    const level = Number(user.level) || 1;
 
     return `
-      <article class="peer-card edge" data-uid="${user.id}">
-        <div class="peer-top">
-          ${avatar(user, null)}
-          <div class="peer-id">
-            <b>${esc(user.nickname)}</b>
-            <span class="handle">@${esc(user.username)} · ${esc(user.edition_label)}</span>
-          </div>
-          <div class="score-box">
-            <span class="num iris-text">${score.score}</span>
-            <span class="cap">match</span>
-          </div>
+      <article class="peer-card" data-uid="${user.id}">
+        <div class="peer-face">
+          ${avatar(user, "xl")}
+          <span class="peer-lv">Lv.<b>${level}</b></span>
+          ${user.level_title ? `<span class="peer-lv-title">${esc(user.level_title)}</span>` : ""}
+          <span class="peer-state${user.online ? " peer-state--on" : ""}">${user.online ? "在线" : "离线"}</span>
         </div>
 
-        <div class="chip-row">
-          ${user.online ? `<span class="tag tag--iris">在线</span>` : ""}
-          ${ageTag(user)}
-          ${user.region ? `<span class="tag">${esc(user.region)}</span>` : ""}
-          ${styles.map((style) => `<span class="tag">${esc(style)}</span>`).join("")}
-          ${user.has_contact ? `<span class="tag">已备联系方式</span>` : ""}
-        </div>
+        <div class="peer-body">
+          <div class="peer-head">
+            <div class="peer-id">
+              <b>${esc(user.nickname)}</b>
+              <span class="handle">@${esc(user.username)} · ${esc(user.edition_label)}</span>
+            </div>
+            <div class="score-box">
+              <span class="num iris-text">${score.score}</span>
+              <span class="cap">match</span>
+            </div>
+          </div>
 
-        ${reasons.length ? `<ul class="reason-list" style="list-style:none;margin:0;padding:0">
-          ${reasons.map((reason) => `<li><span class="spark">✦</span><span>${esc(reason)}</span></li>`).join("")}
-        </ul>` : ""}
+          <div class="chip-row">
+            ${ageTag(user)}
+            ${user.region ? `<span class="tag">${esc(user.region)}</span>` : ""}
+            ${styles.map((style) => `<span class="tag">${esc(style)}</span>`).join("")}
+            ${user.has_contact ? `<span class="tag">已备联系方式</span>` : ""}
+          </div>
 
-        <p class="peer-bio">${bioOf(user)}</p>
+          ${reasons.length ? `<ul class="reason-list" style="list-style:none;margin:0;padding:0">
+            ${reasons.map((reason) => `<li><span class="spark">✦</span><span>${esc(reason)}</span></li>`).join("")}
+          </ul>` : ""}
 
-        <div class="peer-actions">
-          <button class="btn btn-primary" data-act="greet" data-uid="${user.id}">申请交换联系方式</button>
-          <button class="btn btn-ghost" data-act="profile" data-uid="${user.id}">资料</button>
-          <button class="btn btn-ghost" data-act="skip" data-uid="${user.id}" title="不再推荐">✕</button>
+          <p class="peer-bio">${bioOf(user)}</p>
+
+          <div class="peer-actions">
+            <button class="btn btn-primary" data-act="greet" data-uid="${user.id}">申请交换联系方式</button>
+            <button class="btn btn-ghost" data-act="profile" data-uid="${user.id}">资料</button>
+            <button class="btn btn-ghost" data-act="skip" data-uid="${user.id}" title="不再推荐">✕</button>
+          </div>
         </div>
       </article>`;
   }
