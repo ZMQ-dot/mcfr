@@ -12,3 +12,15 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# 启动器（独立的 Node 工程，依赖和构建产物不进本站仓库）
+启动器/node_modules/
+启动器/out/
+启动器/release/
+启动器/dist/
+启动器/*.log
+
+# WinUI 启动器（.NET 工程，构建产物不进本站仓库）
+启动器-WinUI/bin/
+启动器-WinUI/obj/
+启动器-WinUI/*.log

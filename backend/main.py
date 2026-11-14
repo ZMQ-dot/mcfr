@@ -15,12 +15,14 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, admins, upgrade
+from . import circles as circle_logic
 from . import posts as post_logic
 from .achievements import catalog
 from .database import DB_PATH, connect, get_db, now_ts
 from .mirror import auto_settings, auto_sync_loop
 from .routers import (
-    admin, auth, captcha, contacts, discover, feedback, launcher, media, mirror, posts, users,
+    admin, auth, captcha, circles, contacts, discover, feedback, launcher, media,
+    mirror, posts, users,
 )
 from . import age
 from .schemas import EDITIONS, LOOKING_FOR, ONLINE_TIMES, PLAY_STYLES
@@ -110,7 +112,7 @@ DOCS_ENABLED = (os.environ.get("MCFR_ENABLE_DOCS") or "").strip().lower() in (
 
 app = FastAPI(
     title="mcfr · Minecraft 同好匹配",
-    description="面向中小学生《我的世界》玩家的安全交友系统",
+    description="面向《我的世界》玩家的安全交友系统",
     version=__version__,
     docs_url="/api/docs" if DOCS_ENABLED else None,
     openapi_url="/api/openapi.json" if DOCS_ENABLED else None,
@@ -156,13 +158,15 @@ CSP = (
 NOINDEX_PATHS = frozenset({
     "/admin",
     "/discover", "/partners", "/achievements", "/mirror", "/me", "/register",
-    "/posts", "/messages",
+    "/posts", "/messages", "/circles",
 })
 
 # ！带参数的路由没法写进上面那个集合（/posts/123 的 123 是变的），
 #   所以另外留一份前缀名单。漏掉它的后果：每一篇帖子都会变成一个
 #   可收录的独立页面 —— 而爬虫看到的其实全是同一份登录页。
-NOINDEX_PREFIXES = ("/posts/",)
+#   /circles/ 同理：圈子主页也是「同一个 index.html」，而且里面的内容
+#   本来就只给成员看，被收录进搜索结果是最不该发生的事。
+NOINDEX_PREFIXES = ("/posts/", "/circles/")
 
 
 @app.middleware("http")
@@ -274,6 +278,17 @@ async def on_post_error(request: Request, exc: post_logic.PostError):
     return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
 
 
+@app.exception_handler(circle_logic.CircleError)
+async def on_circle_error(request: Request, exc: circle_logic.CircleError):
+    """圈子相关的业务错误。和上一条同样的理由，只是错误类型不同。
+
+    ！两个类型必须分开：如果把 CircleError 做成 PostError 的子类，
+      这里就只需要一个处理器 —— 但那样「建圈子时名字太长」在日志里
+      会显示成 PostError，排查时根本想不到是圈子那边的规则。
+    """
+    return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
+
+
 app.include_router(auth.router)
 app.include_router(captcha.router)
 app.include_router(users.router)
@@ -285,6 +300,7 @@ app.include_router(media.router)
 app.include_router(mirror.router)
 app.include_router(mirror.admin_router)
 app.include_router(posts.router)
+app.include_router(circles.router)
 
 # 桌面启动器（v0.33）：公开侧给客户端，admin_router 给后台「启动器」页签
 app.include_router(launcher.router)
@@ -310,7 +326,30 @@ def admin_page():
 @app.get("/posts", include_in_schema=False)
 @app.get("/posts/new", include_in_schema=False)
 @app.get("/messages", include_in_schema=False)
+@app.get("/circles", include_in_schema=False)
 def spa_route():
+    from fastapi.responses import FileResponse
+
+    return FileResponse(FRONTEND_DIR / "index.html")
+
+
+# 在圈子里写帖子：/circles/<id>/new。
+# ！单独一条路由而不是复用 /posts/new?circle=3：前端路由只读 pathname，
+#   查询串在刷新、前进后退、分享链接这三种情况下都得额外处理一遍。
+#   路径里带上圈子 id，刷新回来就还是那个圈子，不需要多一个状态。
+# ！写在 /circles/{circle_id} 前面：按段数它本来就不会被那条抢走
+#   （3 段 vs 2 段），但把更具体的路径排在前面是这个仓库一贯的写法，
+#   以后有人给 /circles/{id} 加个 catch-all 也不会突然出事。
+@app.get("/circles/{circle_id}/new", include_in_schema=False)
+def circle_new_post_page(circle_id: str):
+    from fastapi.responses import FileResponse
+
+    return FileResponse(FRONTEND_DIR / "index.html")
+
+
+# 圈子主页：/circles/<id>。
+@app.get("/circles/{circle_id}", include_in_schema=False)
+def circle_page(circle_id: str):
     from fastapi.responses import FileResponse
 
     return FileResponse(FRONTEND_DIR / "index.html")
@@ -333,9 +372,22 @@ def post_edit_page(post_id: str):
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
-@app.get("/api/health", tags=["系统"], summary="健康检查")
-def health():
-    return {"ok": True, "version": __version__}
+@app.get("/api/health", tags=["系统"], summary="健康检查（顺带报一下公开统计）")
+def health(conn: sqlite3.Connection = Depends(get_db)):
+    """给探针和侧栏那盏状态灯用。
+
+    ！统计放在这里而不是让前端去拉 /api/meta：meta 里带着整套成就目录和选项
+      字典（几十 KB），而侧栏每 90 秒只想问一句「你好着吗、现在几个人」。
+      同一个接口顺带回答，比多开一个接口更省事。
+    ！统计失败不能让健康检查失败 —— 那会让监控误判成「整个站点挂了」，
+      于是真的挂掉时反而看不出区别。所以这里吞掉异常，只少一个字段。
+    """
+    payload = {"ok": True, "version": __version__}
+    try:
+        payload["stats"] = _public_stats(conn)
+    except Exception:  # noqa: BLE001
+        pass
+    return payload
 
 
 @app.get("/api/version", tags=["系统"], summary="前后端版本号（用于判断页面是不是缓存的旧版）")
@@ -377,12 +429,16 @@ def meta(conn: sqlite3.Connection = Depends(get_db)):
         "play_styles": list(PLAY_STYLES),
         "online_times": list(ONLINE_TIMES),
         "looking_for": list(LOOKING_FOR),
+        # 圈子的主题标签（v0.34）。放在 meta 里而不是单独一个接口：
+        # 它和上面三组选项是同一类东西（固定取值、建资料/建圈子时填），
+        # 前端启动时已经拿了一份，没必要为此多一次请求。
+        "circle_topics": circle_logic.topics(),
         "report_reasons": list(contacts.REPORT_REASONS),
         "achievements": catalog(),
         "brand": BRAND,
         "version": __version__,
         "privacy_note": (
-            "注册不收集真实姓名、学校、住址与手机号；邮箱是选填的，可不填。"
+            "注册不收集真实姓名、住址与手机号；邮箱是选填的，可不填。"
             "联系方式默认隐藏，只有你同意后才会发送给对方。"
         ),
         "stats": _public_stats(conn),

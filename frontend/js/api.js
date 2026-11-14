@@ -293,6 +293,25 @@ const Api = {
       "X-Filename": encodeURIComponent(file.name || "attachment"),
     }),
 
+  /* ---- 圈子（v0.34）----
+     圈子帖就是普通的帖子，只是多带一个 circle_id 并且只有成员可见；
+     所以「圈子里的帖子」走的是 /api/circles/{id}/posts，不是 /api/posts。 */
+  circles: (params = {}) => api(`/api/circles?${new URLSearchParams(params)}`),
+  circle: (id) => api(`/api/circles/${id}`),
+  createCircle: (payload) => api("/api/circles", { method: "POST", body: payload }),
+  joinCircle: (id) => api(`/api/circles/${id}/join`, { method: "POST" }),
+  /* 退出 = 界面上那句「删除」。返回 {dissolved, successor, post_count} ——
+     前端要能说清「圈子解散了没有」，所以不能用「POST 完就当成功了」的处理。 */
+  leaveCircle: (id) => api(`/api/circles/${id}/leave`, { method: "POST" }),
+  circlePosts: (id, params = {}) =>
+    api(`/api/circles/${id}/posts?${new URLSearchParams(params)}`),
+  circleMembers: (id, limit = 30) => api(`/api/circles/${id}/members?limit=${limit}`),
+
+  /* ---- 系统 ---- */
+  /* 健康检查。侧栏那盏「服务器在线」的灯用的就是它：
+     既要知道能不能连上，也要拿一次往返时间 —— 所以不缓存、每次都真打。 */
+  health: () => api("/api/health", { skipAuth: true }),
+
   /* ---- 信息中心（v0.27）---- */
   notifications: (box = "all", page = 1) =>
     api(`/api/notifications?box=${encodeURIComponent(box)}&page=${page}`),

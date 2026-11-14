@@ -398,6 +398,70 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- ===========================================================================
+-- 圈子（v0.34 起）
+--
+-- 「圈子」= 一群自己凑到一起的人 + 只有这群人看得见的帖子。
+-- 它和「发现同好」是两条完全不同的路：
+--   发现同好是**算法**把两个陌生人推到一起（1 对 1，靠匹配分）；
+--   圈子是**人**自己挑一个主题进去（多对多，靠共同兴趣）。
+--
+-- ！为什么圈子帖复用 posts 表，而不是新开一张 circle_posts：
+--   发帖那一套（富文本正文、配图、附件、制作人员、点赞、评论、转发、
+--   频率限制、内容安全词库、后台下架、软删除）全都已经写好了，
+--   而且是这个项目里最重的一块。新开一张表等于把这些全部重写一遍，
+--   连带后台审核、通知、计数重算都要各写两份 —— 两份一定会跑偏。
+--   所以圈子帖就是「posts 里 circle_id 不为 0 的那些行」，
+--   唯一的区别是可见范围：它对**圈子成员**可见，对别人连存在都看不到。
+--
+-- ！circle_id 用 0 表示「不在任何圈子里」，而不是 NULL：
+--   SQLite 里 NULL 参与比较永远为假，`circle_id != ?` 会把 NULL 行整片丢掉，
+--   `circle_id IN (...)` 同理。0 让「公开时间线」这条过滤条件能写成
+--   `p.circle_id = 0`，不用到处写 IS NULL / IS NOT NULL。
+--   代价是它没法做外键（0 不是任何 circle 的 id），所以「圈子被解散之后
+--   那些帖子怎么办」必须由代码显式处理 —— 见 circles.leave_circle。
+CREATE TABLE IF NOT EXISTS circles (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL,
+    -- 一句话介绍，列表卡片上显示的那一行
+    intro      TEXT    NOT NULL DEFAULT '',
+    -- 详细说明，圈子主页显示。纯文本（换行会被渲染成分段）
+    about      TEXT    NOT NULL DEFAULT '',
+    -- 主题标签，取值来自 backend/circles.py 的 CIRCLE_TOPICS
+    topic      TEXT    NOT NULL DEFAULT '',
+    owner_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- open | deleted（解散 = 软删，和帖子一样：里面的帖子还要留着记录）
+    status     TEXT    NOT NULL DEFAULT 'open',
+    created_at INTEGER NOT NULL,
+    -- 0 = 从没改过
+    updated_at INTEGER NOT NULL DEFAULT 0
+);
+
+-- ！名字唯一，而且不区分大小写：站里同时存在「Redstone」和「redstone」
+--   两个圈子，对用户来说就是同一个圈子被劈成了两半。
+--   COLLATE NOCASE 只影响 ASCII 大小写，中文名本来就没有大小写之分。
+--   代码里仍然会先查一次同名（给一句人话提示），这条索引是硬保证。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_circles_name
+    ON circles(name COLLATE NOCASE);
+
+-- 列表页固定是「按创建时间倒序取还在的」，这就是它的覆盖索引
+CREATE INDEX IF NOT EXISTS idx_circles_list ON circles(status, created_at DESC);
+
+-- 加入记录。主键就是 (圈子, 人) —— 天然保证一人一圈只加一次，
+-- 不需要先查后插那种有缝隙的写法。
+CREATE TABLE IF NOT EXISTS circle_members (
+    circle_id INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- owner | member。圈主也占一行，不然「圈子有几个人」要分两处数。
+    role      TEXT    NOT NULL DEFAULT 'member',
+    joined_at INTEGER NOT NULL,
+    PRIMARY KEY (circle_id, user_id)
+);
+
+-- 「我加入了哪些圈子」是每次开圈子页都要跑的查询，这就是它的覆盖索引
+CREATE INDEX IF NOT EXISTS idx_circle_members_user
+    ON circle_members(user_id, joined_at DESC);
+
+-- ===========================================================================
 -- 帖子（v0.27 起）
 --
 -- 站内第一次出现「用户写的长内容」。之前所有用户产出的文字都是短字段
@@ -427,6 +491,14 @@ CREATE TABLE IF NOT EXISTS posts (
     -- ！删除用软删：已经有别人评论、点赞过的帖子直接物理删掉，
     --   会让那些人的通知点进去变成 404，而他们什么错都没有。
     status        TEXT    NOT NULL DEFAULT 'published',
+    -- 这篇帖子发在哪个圈子里（v0.34 起）。0 = 公开发在「帖子」里。
+    -- ！可见范围就靠这一列分流：
+    --   circle_id = 0      → 全站可见（原来的帖子模块）
+    --   circle_id = 圈子 id → 只有这个圈子的成员可见
+    --   所以**任何**列出公开帖子的查询都必须显式带上 `circle_id = 0`，
+    --   漏一处就等于把圈子里的私密内容捅到全站时间线上。
+    --   为旧库补这一列见 TABLE_COLUMN_MIGRATIONS。
+    circle_id     INTEGER NOT NULL DEFAULT 0,
     like_count    INTEGER NOT NULL DEFAULT 0,
     comment_count INTEGER NOT NULL DEFAULT 0,
     share_count   INTEGER NOT NULL DEFAULT 0,
@@ -706,6 +778,13 @@ CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at);
 --   反过来也完全说得通。上面 idx_reports_status 旁边那句注释说的就是同一件事，
 --   v0.31 加索引时没把这条教训用上，这次补上。
 CREATE INDEX IF NOT EXISTS idx_admin_sessions_admin ON admin_sessions(admin_id);
+
+-- ！v0.34：posts.circle_id 是**迁移补的列**（见 TABLE_COLUMN_MIGRATIONS），
+--   所以「圈子里的帖子，按时间倒序」这条索引必须写在这里、不能写进 SCHEMA。
+--   写进 SCHEMA 的后果就是上面那段说过的第三种：新库没事（建表时列就在），
+--   老库启动时 "no such column: circle_id" 直接崩。
+--   判据只有一条：**索引的列如果是迁移补的，索引就必须在 POST_MIGRATION_SQL 里。**
+CREATE INDEX IF NOT EXISTS idx_posts_circle ON posts(circle_id, created_at DESC);
 """
 
 # 旧版本遗留、不再使用的表，每次启动顺手清掉（DROP IF EXISTS 是幂等的）
@@ -796,6 +875,10 @@ TABLE_COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     # ！不能只存在帖子正文里 —— 下载时要用它设置 Content-Disposition 的
     #   filename，而那条路由不读正文（它只认文件名），只能从库里取。
     ("post_media", "display_name", "display_name TEXT NOT NULL DEFAULT ''"),
+    # v0.34：帖子所在圈子（0 = 公开发布在「帖子」模块里）。
+    # ！它在 SCHEMA 的 CREATE TABLE posts 里也有 —— 那不是重复，是这套迁移的用法：
+    #   新库靠 SCHEMA 一次建好，老库靠这一行补上，migrate() 会先问 PRAGMA 再决定。
+    ("posts", "circle_id", "circle_id INTEGER NOT NULL DEFAULT 0"),
 )
 
 # ---------------------------------------------------------------------------

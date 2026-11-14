@@ -828,6 +828,9 @@
         <div class="admin-row-main">
           <div class="title">
             <b>${esc(item.title)}</b>
+            <!-- 圈子帖（v0.34）也走这一套下架 / 删除流程，只是要让人一眼看出
+                 它本来是发在圈子里、只给成员看的 —— 处理方式会不太一样。 -->
+            ${item.circle ? `<span class="tag tag--iris">圈子 · ${esc(item.circle.name || item.circle.id)}</span>` : ""}
             ${hidden ? `<span class="tag tag--warn">${CONTENT_STATUS_LABELS[item.status] || item.status}</span>` : ""}
           </div>
           <span class="meta">${esc(item.author.nickname)} · ${fmtRelative(item.created_at)}</span>

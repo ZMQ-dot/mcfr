@@ -17,8 +17,8 @@ window.McfrI18n.add("en", {
   "mcfr · Minecraft 同好匹配": "mcfr · Minecraft matchmaking",
   "找到能<br>一起<span class=\"iris-text\">造世界</span><br>的人":
     "Find<br>people to<br><span class=\"iris-text\">build with</span>",
-  "专为中小学生玩家打造的安全交友站：按玩法、版本和上线时间匹配同好。注册不需要邮箱，一句话就能开始；联系方式默认对所有人隐藏，只有你逐条同意，才会发送给想认识你的那个人。":
-    "A safe place for young Minecraft players to meet. We match you by play " +
+  "面向《我的世界》玩家的安全、纯净交友站：按玩法、版本和上线时间匹配同好。注册不需要邮箱，一句话就能开始；联系方式默认对所有人隐藏，只有你逐条同意，才会发送给想认识你的那个人。":
+    "A safe, simple place for Minecraft players to meet. We match you by play " +
     "style, game version and when you're online. No email needed to sign up. " +
     "Your contact details stay hidden by default — they're only sent to someone " +
     "after you approve them, one by one.",
@@ -55,7 +55,7 @@ window.McfrI18n.add("en", {
   "别人怎么称呼你": "What should people call you?",
   "6 位以上，不要使用真实生日": "At least 6 characters — don't use your real birthday",
   "邮箱（选填）": "Email (optional)",
-  "方便同学联系你，不填也可以": "So friends can reach you. You can leave it blank.",
+  "方便别人联系你，不填也可以": "So others can reach you. You can leave it blank.",
   "用来挡住批量注册的小号；看不清就点图片换一张。":
     "This stops bots from mass-registering. Can't read it? Click for a new image.",
   "游戏版本": "Game edition",
@@ -89,6 +89,7 @@ window.McfrI18n.add("en", {
   "跟随系统": "Auto",
   "浅色": "light",
   "深色": "dark",
+  "跟随时间": "By the clock",
 
   /* ---- Time ---- */
   "刚刚": "just now",
@@ -318,8 +319,8 @@ window.McfrI18n.add("en", {
     "{} comments",
   "评论了":
     "commented on",
-  "说点什么…… 友善一点，这里大多是学生。":
-    "Say something… be kind, most people here are students.",
+  "说点什么…… 友善一点。":
+    "Say something… be kind.",
   "赞 {}":
     "{} likes",
   "转发了帖子给你":
@@ -518,4 +519,106 @@ window.McfrI18n.add("en", {
     "Off means closing the browser signs you out",
   "已开启：下次打开直接进来": "On — next visit goes straight in",
   "已关闭：下次要重新输密码": "Off — you'll sign in again next time",
+
+  /* ---- Circles (v0.34) ----
+     The audience is kids, so a circle is described as "a room you walk into",
+     not as a "group" or a "community" (both sound corporate). */
+  "圈子": "Circles",
+  "一起玩的": "Play together in",
+  "不用等算法发牌 —— 挑一个主题进去。圈子里发的帖子只有成员看得见，所以这里说话可以随便一点。":
+    "No waiting for the algorithm to deal you a card — just pick a topic and walk in. " +
+    "What's posted inside a circle is visible only to its members, so people talk more freely here.",
+  "我的圈子": "My circles",
+  "发现圈子": "Find circles",
+  "去发现圈子": "Find circles",
+  "搜圈子 —— 名字或介绍里的词": "Search circles — by name or description",
+  "搜索圈子": "Search circles",
+  "建一个圈子": "Start a circle",
+  "你还没加入任何圈子": "You haven't joined any circles yet",
+  "去「发现圈子」看看，或者自己建一个 —— 圈子里发的东西只有成员看得见。":
+    "Take a look in Find circles, or start your own — whatever you post in a circle " +
+    "is visible only to its members.",
+  "没有搜到相关的圈子": "No circles matched",
+  "还没有人建过圈子": "Nobody has started a circle yet",
+  "第一个圈子就交给你了 —— 点右上角那颗「建一个圈子」。":
+    "The first one is yours — hit “Start a circle” up top.",
+  "进入": "Open",
+  "删除": "Remove",
+  "加入": "Join",
+  "我建的": "Started by me",
+  "{} 位成员": "{} members",
+  "{} 篇帖子": "{} posts",
+  "圈子名": "Circle name",
+  "例如 红石研究所 / 末地跑酷队": "e.g. Redstone Lab / End Run Club",
+  "一句话介绍": "One-line intro",
+  "例如 每周分享一个红石作品，互相点评": "e.g. one redstone build a week, everyone reviews",
+  "主题": "Topic",
+  "详细说明（选填）": "Details (optional)",
+  "这个圈子打算一起做什么？比如：每周交一个作品；新手提问也可以。":
+    "What will you do together? One build a week, or just somewhere beginners can ask questions.",
+  "建好之后你就是圈主。你退出这个圈子时，它会自动交给最早加入的那一位；如果只剩你一个人，圈子会一起解散。":
+    "You'll be the owner. If you leave, the circle goes to whoever joined first; " +
+    "if you're the only one left, the circle is dissolved.",
+  "创建圈子": "Create circle",
+  "创建中…": "Creating…",
+  "先给圈子起个名字": "Give the circle a name first",
+  "圈子建好了，进去看看吧": "Circle created — have a look",
+  "这个圈子还没写介绍。": "This circle has no intro yet.",
+  "这个圈子": "this circle",
+  "已加入「{}」": "Joined 「{}」",
+  "已退出圈子": "You left the circle",
+  "「{}」解散了，里面的 {} 篇帖子一起删除了":
+    "「{}」 was dissolved, and its {} posts went with it",
+  "已退出，圈主交给了 {}": "You left — ownership passed to {}",
+  "进入圈子：{}": "Open circle: {}",
+  "你是「{name}」的圈主。退出后它会交给最早加入的那位成员；\n如果圈子里只剩你一个人，圈子会直接解散，里面的帖子也会一起删除。\n\n确定退出吗？":
+    "You own 「{name}」. If you leave, it goes to whoever joined first.\n" +
+    "If you're the only one left, the circle is dissolved and its posts are deleted with it.\n\n" +
+    "Leave the circle?",
+  "退出「{name}」？\n退出后就看不到这个圈子里的帖子了，你写过的帖子还留在里面。":
+    "Leave 「{name}」?\nYou won't see this circle's posts any more. Posts you wrote stay inside.",
+  "成员": "Members",
+  "还没有别人": "nobody else yet",
+  "你是圈主": "You own this circle",
+  "在圈子里发帖": "Post in this circle",
+  "退出圈子": "Leave circle",
+  "加入圈子": "Join circle",
+  "加入之后才能看到圈子里发了什么": "Join to see what's posted inside",
+  "加入之后才能看到圈子里的帖子": "Join to see the posts in this circle",
+  "圈子里的内容只对成员可见 —— 这也是很多人愿意在这里说话的原因。":
+    "Only members can see what's posted here — that's why people feel okay talking.",
+  "这个圈子里还没有帖子": "No posts in this circle yet",
+  "第一篇就交给你了 —— 上面那颗「在圈子里发帖」。":
+    "The first one is yours — hit “Post in this circle” above.",
+  "发到圈子": "Posting to circle",
+  "只有这个圈子的成员看得到": "Only members of this circle can see it",
+  "发到": "Posting to",
+  "帖子广场": "the public board",
+  "全站所有登录的人都能看到": "Everyone signed in can see it",
+  "在「{}」里写一篇": "Write in 「{}」",
+  "发出去了，圈子里的成员都能看到了": "Posted — everyone in the circle can see it now",
+  "← 返回圈子": "← Back to the circle",
+  "← 返回帖子列表": "← Back to posts",
+  /* circle topics */
+  "生存": "Survival",
+  "建筑": "Building",
+  "红石": "Redstone",
+  "模组": "Mods",
+  "小游戏": "Minigames",
+  "联机": "Multiplayer",
+  "聊天": "Chatting",
+  "综合": "General",
+
+  /* ---- v0.37：卡片上的替代简介与侧栏状态灯 ----
+     「常玩 {}。」和「{} 在线。」是拆开的两个句子，因为前端把它们渲染成
+     两个独立的文本节点（见 app.js 的 bioOf），各自查一次字典。 */
+  "常玩 {}。": "Usually plays {}.",
+  "{} 在线。": "Usually on {}.",
+  "刚来不久，资料还在填。": "Just joined — still filling in the profile.",
+  "还没写简介，先打个招呼吧。": "No bio yet — say hi first.",
+  "资料还空着，人是已经来了。": "Profile's empty, but they're here.",
+  "服务器在线": "Server online",
+  "连不上服务器": "Can't reach the server",
+  "正在连接…": "Connecting…",
+  "{} 人在线 · 共 {} 位同好": "{} online · {} members",
 });

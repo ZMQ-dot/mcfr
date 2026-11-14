@@ -243,9 +243,18 @@
     // 当前打开的帖子 id（0 = 没在某个帖子上）。路由解析出来后落在这里，
     // renderPost / renderEditor 再去读。
     routePostId: 0,
+    // 当前打开的圈子 id（0 = 不在圈子里）。和 routePostId 是同一个机制：
+    // /circles/7 和 /circles/7/new 这两种地址都靠它。
+    routeCircleId: 0,
     posts: { items: [], total: 0, page: 1, hasMore: false, query: "", mineOnly: false },
     post: null,
     postComments: { items: [], total: 0, page: 1, hasMore: false },
+    // 圈子（v0.34）：列表 + 当前打开的圈子 + 这个圈子里的帖子。
+    // ！tab 只有 "mine" / "all" 两档，切档时 items 必须清空 ——
+    //   不清的话会先看到上一档的卡片，再被新数据换掉，闪一下。
+    circles: { tab: "mine", query: "", items: [], total: 0, page: 1, hasMore: false },
+    circle: null,
+    circlePosts: { items: [], total: 0, page: 1, hasMore: false },
     inbox: { items: [], total: 0, page: 1, hasMore: false, box: "all", unread: 0 },
     // 编辑器工作台。切走再回来时它还在 —— 这就是「草稿」的全部实现。
     editor: null,
@@ -265,6 +274,7 @@
      这里只留 key —— 图标不再是“一个字符”，所以不能写在数据里。 */
   const NAV = [
     { key: "discover", label: "发现同好", badge: null },
+    { key: "circles", label: "圈子", badge: null },
     { key: "posts", label: "帖子", badge: null },
     { key: "mirror", label: "模组镜像", badge: null },
     { key: "partners", label: "我的伙伴", badge: "pending_requests" },
@@ -276,6 +286,7 @@
   // 每个功能页对应一个真实 URL，方便收藏、分享和用浏览器标签页分别打开
   const ROUTES = {
     "/discover": "discover",
+    "/circles": "circles",
     "/posts": "posts",
     "/messages": "messages",
     "/mirror": "mirror",
@@ -284,24 +295,39 @@
     "/me": "me",
   };
 
-  /* ！帖子详情、帖子编辑这两个页面【不能】靠 ROUTES 这张表：
-     它们的路径里有一个变化的数字（/posts/123、/posts/123/edit），
+  /* ！帖子详情、帖子编辑、圈子主页这三个页面【不能】靠 ROUTES 这张表：
+     它们的路径里有一个变化的数字（/posts/123、/circles/7），
      而表里的键是固定字符串。所以单独用正则解析，并且
      返回的是一个带参数的对象 —— 只返回页面名的话，
-     「第 1 篇」和「第 2 篇」在 setView 看来是一模一样的。 */
+     「第 1 个圈子」和「第 2 个圈子」在 setView 看来是一模一样的。 */
   function routeFromPath(path) {
     const clean = (path || "/").replace(/\/+$/, "") || "/";
-    if (clean === "/posts/new") return { view: "editor", postId: 0 };
+    if (clean === "/posts/new") return { view: "editor", postId: 0, circleId: 0 };
     const editing = /^\/posts\/(\d+)\/edit$/.exec(clean);
-    if (editing) return { view: "editor", postId: Number(editing[1]) };
+    if (editing) return { view: "editor", postId: Number(editing[1]), circleId: 0 };
     const detail = /^\/posts\/(\d+)$/.exec(clean);
-    if (detail) return { view: "post", postId: Number(detail[1]) };
-    return { view: ROUTES[clean] || "discover", postId: 0 };
+    if (detail) return { view: "post", postId: Number(detail[1]), circleId: 0 };
+    // 在圈子里写帖子：/circles/7/new
+    const circleNew = /^\/circles\/(\d+)\/new$/.exec(clean);
+    if (circleNew) return { view: "editor", postId: 0, circleId: Number(circleNew[1]) };
+    const circleDetail = /^\/circles\/(\d+)$/.exec(clean);
+    if (circleDetail) return { view: "circle", postId: 0, circleId: Number(circleDetail[1]) };
+    return { view: ROUTES[clean] || "discover", postId: 0, circleId: 0 };
   }
 
-  function pathForView(view, postId) {
+  function pathForView(view, postId, circleId) {
     if (view === "post" && postId) return `/posts/${postId}`;
-    if (view === "editor") return postId ? `/posts/${postId}/edit` : "/posts/new";
+    if (view === "circle" && circleId) return `/circles/${circleId}`;
+    if (view === "editor") {
+      // ！顺序要紧：编辑已有帖子永远走 /posts/<id>/edit。
+      //   反过来的话，从一个圈子主页点完「编辑」再回编辑器，
+      //   地址栏会变成 /circles/<圈子 id>/new —— 看起来像「在这个圈子里发新帖」，
+      //   实际却是在改一篇老帖子，刷新一下还会变成一篇新的空草稿。
+      if (postId) return `/posts/${postId}/edit`;
+      // 圈子那条把 id 放进了路径（/circles/7/new），刷新回来还在原地。
+      if (circleId) return `/circles/${circleId}/new`;
+      return "/posts/new";
+    }
     return Object.keys(ROUTES).find((path) => ROUTES[path] === view) || "/discover";
   }
 
@@ -309,7 +335,9 @@
      免得每处都自己拼一遍 routeFromPath + setView。 */
   async function setViewFromLocation(options = {}) {
     const route = routeFromPath(window.location.pathname);
-    return setView(route.view, { ...options, postId: route.postId });
+    return setView(route.view, {
+      ...options, postId: route.postId, circleId: route.circleId,
+    });
   }
 
   /* ============================================================
@@ -628,6 +656,50 @@
     mountSkins($("#me-chip"));
   }
 
+  /* 侧栏底部那盏「服务器状态」的灯。
+     ！它显示的是**真的**东西：一次 /api/health 往返的毫秒数、库里真人的在线数。
+       写死一个「在线」的假灯最省事，但后端真挂了它照样亮着 —— 那种装饰一旦
+       被用户发现，整页的其他「活数据」也会跟着不可信。
+       data-state 只有三种：wait（还没测到）/ on / off。 */
+  const NetStatus = { ok: null, ms: 0, players: 0, online: 0 };
+
+  function paintServerStatus() {
+    const box = $("#server-status");
+    if (!box) return;
+    const on = NetStatus.ok === true;
+    const off = NetStatus.ok === false;
+    box.dataset.state = on ? "on" : (off ? "off" : "wait");
+    box.innerHTML = `
+      <span class="dot" aria-hidden="true"></span>
+      <span class="txt">${on ? "服务器在线" : off ? "连不上服务器" : "正在连接…"}</span>
+      ${on && NetStatus.ms ? `<span class="ms">${NetStatus.ms} ms</span>` : ""}`;
+
+    const sub = $("#server-sub");
+    if (!sub) return;
+    /* 「N 人在线」用的是 300 秒窗口内的真人（见 backend/main.py 的 _public_stats），
+       不是活跃会话数 —— 后者会把「挂着页面去吃饭的人」也算成在线。 */
+    sub.textContent = on && NetStatus.players
+      ? `${NetStatus.online} 人在线 · 共 ${NetStatus.players} 位同好`
+      : "";
+  }
+
+  async function pingServer() {
+    const started = performance.now();
+    try {
+      const data = await Api.health();
+      NetStatus.ok = true;
+      NetStatus.ms = Math.round(performance.now() - started);
+      const stats = data && data.stats;
+      if (stats) {
+        NetStatus.players = Number(stats.players) || 0;
+        NetStatus.online = Number(stats.online) || 0;
+      }
+    } catch (error) {
+      NetStatus.ok = false;
+    }
+    paintServerStatus();
+  }
+
   function renderNav() {
     const stats = State.overview?.stats || {};
     const items = NAV.map((item) => {
@@ -648,8 +720,13 @@
       <span class="eyebrow" style="padding:0 .8rem .5rem">导航</span>
       ${items}
       <div class="nav-foot">
+        <div class="server-status" id="server-status" data-state="wait" role="status" aria-live="polite"></div>
+        <div class="server-sub" id="server-sub"></div>
         <button class="btn btn-ghost btn-sm btn-block" data-action="logout">退出登录</button>
       </div>`;
+
+    // 侧栏每换一次页都会重画一遍，这盏灯得跟着补上当前状态
+    paintServerStatus();
   }
 
   async function applyOverview(data) {
@@ -686,17 +763,22 @@
     // 这一次要不要无视缓存重新拉数据。只有「换一批」这类明确要求刷新的操作会传。
     State.forceFresh = options.fresh === true;
 
-    // ！帖子详情 / 编辑页「是哪一篇」全靠这个。
+    // ！帖子详情 / 编辑页 / 圈子主页「是哪一篇 / 哪个圈子」全靠这两个。
     //   换了一篇就要把上一份缓存丢掉，否则会先闪一眼上一篇的内容。
     if (options.postId !== undefined) {
       const next = Number(options.postId) || 0;
       if (next !== State.routePostId) ViewCache.delete(name);
       State.routePostId = next;
     }
+    if (options.circleId !== undefined) {
+      const next = Number(options.circleId) || 0;
+      if (next !== State.routeCircleId) ViewCache.delete(name);
+      State.routeCircleId = next;
+    }
 
     // 同步地址栏（从浏览器前进/后退回来时不再重复压栈）
     if (!options.fromHistory) {
-      const path = pathForView(name, State.routePostId);
+      const path = pathForView(name, State.routePostId, State.routeCircleId);
       if (window.location.pathname !== path) {
         window.history.pushState({ view: name }, "", path);
       }
@@ -729,10 +811,10 @@
       view.innerHTML = `<div class="empty"><span class="glyph">⚠</span><p>${esc(error.message)}</p></div>`;
     }
 
-    // ！带参数的页面（帖子详情 / 帖子编辑）不进缓存：同一个页面名
+    // ！带参数的页面（帖子详情 / 帖子编辑 / 圈子主页）不进缓存：同一个页面名
     //   对应的可能是完全不同的内容，缓存下来会在切帖子时先闪一眼旧的。
     //   它们每次都是真去拉数据，本来也没有「秒开」可言。
-    if (name !== "post" && name !== "editor") {
+    if (name !== "post" && name !== "editor" && name !== "circle") {
       ViewCache.set(name, view.innerHTML);
     }
     // 页面刚渲染完，把里面的皮肤 / 头像 canvas 画上
@@ -769,6 +851,40 @@
     return `<span class="tag${user.adult ? " tag--iris" : ""}">${esc(user.age_label)}</span>`;
   }
 
+  /* 卡片上那段小字。
+     ！没写简介的人**不编**第一人称的话（「找个红石大佬带我」那种）——
+       那是把话塞进别人嘴里，何况这站上大多是未成年人。
+       改为用 TA 自己填过的资料拼一句：常玩的玩法 + 作息。
+       好处是每张卡都不一样、而且每句都真 —— 之前那版所有空简介的卡片
+       都在复读同一句话，一眼就看得出是空壳。
+     ！两句分开成两个 <span>：i18n 是按文本节点整串查字典的，
+       把「常玩 X。周末白天在线。」写成一段的话，两句都翻不了；
+       拆开后各自能命中「常玩 {}。」和「{} 在线。」。 */
+  const EMPTY_BIO_LINES = [
+    "刚来不久，资料还在填。",
+    "还没写简介，先打个招呼吧。",
+    "资料还空着，人是已经来了。",
+  ];
+
+  function bioOf(user) {
+    const bio = (user.bio || "").trim();
+    if (bio) return esc(bio);
+
+    const styles = (user.play_styles || []).slice(0, 2);
+    const when = (user.online_time || [])[0] || "";
+    if (!styles.length && !when) {
+      /* 连玩法都没填的人：三句轮着来，按 id 取，**固定**不会每次重画都变。
+         ！为什么不是随机：卡片的重新渲染很频繁（切页面、搜索），
+           随机会让同一张卡的句子在眼前跳来跳去，比复读还怪。 */
+      return EMPTY_BIO_LINES[Math.abs(Number(user.id) || 0) % EMPTY_BIO_LINES.length];
+    }
+
+    const parts = [];
+    if (styles.length) parts.push(`<span>常玩${esc(styles.join("、"))}。</span>`);
+    if (when) parts.push(`<span>${esc(when)}在线。</span>`);
+    return parts.join("");
+  }
+
   function peerCard(user) {
     const score = user.score_info || { score: 0, reasons: [] };
     const reasons = score.reasons || [];
@@ -800,7 +916,7 @@
           ${reasons.map((reason) => `<li><span class="spark">✦</span><span>${esc(reason)}</span></li>`).join("")}
         </ul>` : ""}
 
-        <p class="peer-bio">${esc(user.bio) || "这位玩家还没有写简介。"}</p>
+        <p class="peer-bio">${bioOf(user)}</p>
 
         <div class="peer-actions">
           <button class="btn btn-primary" data-act="greet" data-uid="${user.id}">申请交换联系方式</button>
@@ -837,7 +953,7 @@
         <div class="titles">
           <span class="eyebrow eyebrow--iris">Discover</span>
           <h1 class="display display-lg">今晚想和<span class="iris-text">谁</span>一起玩</h1>
-          <p class="lede">按你们喜欢的玩法、游戏版本和上线时间算出「合得来指数」。想认识 TA 就发出交换申请，对方同意后你们才会互相看到联系方式。</p>
+          <p class="lede">根据你的游戏版本、常玩的玩法与作息，替你排一份今晚能一起开局的名单。看中谁就发出交换申请 —— 对方同意了，你们才会互相看到联系方式。</p>
         </div>
         <button class="btn btn-ghost" data-action="reload-discover">换一批</button>
       </div>
@@ -1653,7 +1769,7 @@
 
       <div class="iris-rule iris-rule--fade" style="margin:1.2rem 0"></div>
 
-      <p class="lede" style="margin-bottom:1rem">${esc(user.bio) || "这位玩家还没有写简介。"}</p>
+      <p class="lede" style="margin-bottom:1rem">${bioOf(user)}</p>
 
       ${score.reasons && score.reasons.length ? `
         <ul class="reason-list" style="list-style:none;margin:0 0 1rem;padding:0">
@@ -1820,6 +1936,7 @@
   // 输入防抖。每敲一个字就打一次接口既浪费，也会让请求乱序返回 ——
   // 先发的后到，列表就停在了半路那个关键词上。
   let postSearchTimer = 0;
+  let circleSearchTimer = 0;
   let peopleTimer = 0;
 
   /* 等比缩到 maxSide 以内，转成 PNG。
@@ -1869,12 +1986,25 @@
      ！需求写得很明确：列表**只显示制作人员和标题**，一个字的正文都不放。
        摘要看着无害，但它会让「点进去看全文」失去理由，
        也最容易把一篇本来完整的话断章取义成另一个意思。 */
-  function postCard(item) {
+  function postCard(item, options = {}) {
     const stats = [
       `赞 ${item.like_count}`,
       `评论 ${item.comment_count}`,
       item.image_count ? `图 ${item.image_count}` : "",
     ].filter(Boolean).map((text) => `<span class="post-stat">${text}</span>`).join("");
+
+    /* options.hideCircle：在圈子主页里不要每张卡片都标一遍圈子名 ——
+       那一整页都属于同一个圈子，标了纯属噪音。而在「帖子 → 我发的」里
+       这个标签是有用的（否则看不出哪篇发在圈子里、哪篇发在广场上）。 */
+    const circleTag = item.circle && !options.hideCircle
+      ? `<span class="tag tag--iris">${esc(item.circle.name || "圈子")}</span>`
+      : "";
+    const statusTag = item.status && item.status !== "published"
+      ? `<span class="tag tag--warn">${item.status === "hidden" ? "已被下架" : "已删除"}</span>`
+      : "";
+    const tags = circleTag || statusTag
+      ? `<div class="chip-row">${circleTag}${statusTag}</div>`
+      : "";
 
     return `
       <article class="post-card edge" data-post="${item.id}">
@@ -1887,10 +2017,7 @@
           <h3 class="post-card__title">${esc(item.title)}</h3>
           <time class="post-card__time">${fmtRelative(item.created_at)}</time>
         </div>
-        ${item.status && item.status !== "published"
-          ? `<div><span class="tag tag--warn">${
-              item.status === "hidden" ? "已被下架" : "已删除"}</span></div>`
-          : ""}
+        ${tags}
         <div class="post-card__makers">
           <span class="eyebrow">制作</span>
           ${makerChips(item.credits)}
@@ -1968,7 +2095,7 @@
       return;
     }
 
-    list.innerHTML = `<div class="post-grid">${items.map(postCard).join("")}</div>`
+    list.innerHTML = `<div class="post-grid">${items.map((item) => postCard(item)).join("")}</div>`
       + (hasMore
         ? `<div class="more-row"><button class="btn btn-ghost" data-act="posts-more">加载更多</button></div>`
         : "");
@@ -2013,7 +2140,11 @@
 
     view.innerHTML = `
       <div class="post-view">
-        <button class="btn btn-ghost btn-sm post-back" data-act="post-back">← 返回帖子列表</button>
+        <!-- 返回去处要跟着帖子走：圈子里的帖子回圈子，广场上的帖子回帖子列表。
+             两者都回「帖子列表」的话，从圈子里点进一篇再返回，就被扔到广场上了。 -->
+        <button class="btn btn-ghost btn-sm post-back" data-act="post-back">
+          ${post.circle ? "← 返回圈子" : "← 返回帖子列表"}
+        </button>
 
         <article class="post-article panel edge">
           <header class="post-head">
@@ -2024,6 +2155,9 @@
               <time>${fmtTime(post.created_at)}</time>
               <span class="post-byline__dot">·</span>
               <span>${post.view_count} 浏览</span>
+              ${post.circle
+                ? `<span class="tag tag--iris">${esc(post.circle.name || "圈子")}</span>`
+                : ""}
               <!-- 「已修改」和知乎一样只标一下，不列修改历史 -->
               ${post.updated_at ? `<span class="tag">已修改</span>` : ""}
               ${post.status !== "published"
@@ -2043,7 +2177,9 @@
                     aria-pressed="${post.liked}">
               赞 <span class="post-like-count">${post.like_count}</span>
             </button>
-            <button class="btn btn-ghost" data-act="post-share" data-id="${post.id}">转发给朋友</button>
+            <!-- 圈子帖没有「转发」：圈子里的内容只该留在圈子里。
+                 后端也会拒（posts.share），这里不画按钮只是别让人白点一次。 -->
+            ${post.circle ? "" : `<button class="btn btn-ghost" data-act="post-share" data-id="${post.id}">转发给朋友</button>`}
             ${post.is_author ? `
               <button class="btn btn-ghost" data-act="post-edit" data-id="${post.id}">编辑</button>
               <button class="btn btn-danger" data-act="post-delete" data-id="${post.id}">删除</button>` : ""}
@@ -2054,7 +2190,7 @@
           <h2 class="post-comments__title">评论<span class="count count--soft">${post.comment_count}</span></h2>
           <div class="comment-form">
             <textarea class="textarea" id="comment-input" rows="2" maxlength="500"
-                      placeholder="说点什么…… 友善一点，这里大多是学生。"></textarea>
+                      placeholder="说点什么…… 友善一点。"></textarea>
             <button class="btn btn-primary" data-act="comment-send" data-id="${post.id}">发表评论</button>
           </div>
           <div id="comment-list"></div>
@@ -2112,6 +2248,440 @@
     paintComments();
   }
 
+  /* ---------------- 圈子（v0.34） ----------------
+
+     为什么圈子值得单独一块界面，而不是并进「帖子」加个筛选：
+     「帖子」是一个**广场** —— 谁都能看见、谁都能写，看的是全站的公共内容；
+     「圈子」是一间**房间** —— 只有推门进来的人看得见里面的话。
+     这两件事的默认行为正好相反（广场默认公开、房间默认私密），
+     合在一个页面里迟早会有人发错地方。
+
+     ！圈子里的帖子就是**普通的帖子**：同一个 postCard、同一个详情页、
+       同一个富文本编辑器。唯一的区别是发帖时多带一个 circle_id，
+       而且只有成员能看到。别为圈子另写一套「发帖 / 点赞 / 评论」——
+       那会变成两份会逐渐跑偏的实现，而且后台审核要审两遍。 */
+
+  /* meta 还没回来时用的兜底。真正的清单来自 /api/meta 的 circle_topics，
+     和 backend/circles.py 的 CIRCLE_TOPICS 是同一份（那边是唯一的一处定义）。 */
+  const CIRCLE_TOPICS_FALLBACK = ["生存", "建筑", "红石", "模组", "小游戏", "联机", "聊天", "综合"];
+
+  /* 圈子徽记的色相：由名字派生，同一个圈子每次进来都是同一种颜色。
+     和用户头像的 avatar_hue 是同一个思路（后端 security.pick_avatar_hue），
+     只是圈子不需要跨设备一致，所以就在前端算。 */
+  function hueOf(text) {
+    let hue = 0;
+    for (const ch of String(text || "")) {
+      hue = (hue * 131 + (ch.codePointAt(0) || 0)) % 360;
+    }
+    return hue;
+  }
+
+  function circleBadge(name, big = false) {
+    const text = String(name || "圈");
+    // ！Array.from 而不是 text[0]：名字以 emoji 开头时，[0] 只取到半个代理对，
+    //   会渲染成一个方块问号。
+    const first = Array.from(text)[0] || "圈";
+    return `<span class="circle-badge${big ? " circle-badge--lg" : ""}"
+                  style="--hue:${hueOf(text)}" aria-hidden="true">${esc(first)}</span>`;
+  }
+
+  function circleTopics() {
+    const list = (Store.meta && Store.meta.circle_topics) || [];
+    return list.length ? list : CIRCLE_TOPICS_FALLBACK;
+  }
+
+  function circleCard(item) {
+    const acts = item.joined
+      ? `<button class="btn btn-ghost btn-sm" data-act="circle-open" data-id="${item.id}">进入</button>
+         <button class="btn btn-danger btn-sm" data-act="circle-leave"
+                 data-id="${item.id}" data-name="${esc(item.name)}">删除</button>`
+      : `<button class="btn btn-primary btn-sm" data-act="circle-join"
+                 data-id="${item.id}" data-name="${esc(item.name)}">加入</button>`;
+
+    return `
+      <article class="circle-card edge" data-cid="${item.id}">
+        <!-- 整卡可点，和帖子卡片同一个做法：一层透明按钮盖在最上面，
+             而不是把整张卡做成 button（那里面还有 div，HTML 不合法）。 -->
+        <button type="button" class="circle-card__open" data-act="circle-open"
+                data-id="${item.id}" aria-label="进入圈子：${esc(item.name)}"></button>
+        <div class="circle-card__top">
+          ${circleBadge(item.name)}
+          <div class="circle-card__id">
+            <b>${esc(item.name)}</b>
+            <span class="handle">${esc(item.topic || "综合")}</span>
+          </div>
+        </div>
+        <p class="circle-card__intro">${esc(item.intro || "这个圈子还没写介绍。")}</p>
+        <div class="circle-card__foot">
+          <span>${item.member_count} 位成员</span>
+          <span>${item.post_count} 篇帖子</span>
+          ${item.is_owner ? `<span>我建的</span>` : ""}
+        </div>
+        <!-- ！这一层要盖在透明按钮之上（z-index），否则点「删除」会被
+             整卡可点的那层吃掉，变成「进入圈子」。 -->
+        <div class="circle-card__acts">${acts}</div>
+      </article>`;
+  }
+
+  async function renderCircles() {
+    const view = $("#view");
+    const mine = State.circles.tab === "mine";
+    const keyword = State.circles.query || "";
+
+    view.innerHTML = `
+      <div class="view-head">
+        <div class="titles">
+          <span class="eyebrow eyebrow--iris">Circles</span>
+          <h1 class="display display-lg">一起玩的<span class="iris-text">圈子</span></h1>
+          <p class="lede">不用等算法发牌 —— 挑一个主题进去。圈子里发的帖子只有成员看得见，所以这里说话可以随便一点。</p>
+        </div>
+      </div>
+
+      <div class="posts-bar">
+        <div class="search-field">
+          <span class="search-icon" aria-hidden="true">${McfrIcons.line("search")}</span>
+          <input id="circle-search" type="search" autocomplete="off" spellcheck="false"
+                 value="${esc(keyword)}"
+                 placeholder="搜圈子 —— 名字或介绍里的词"
+                 aria-label="搜索圈子"/>
+          <button type="button" class="search-clear${keyword ? "" : " hidden"}"
+                  data-act="circle-search-clear" aria-label="清除搜索">✕</button>
+        </div>
+        <button class="btn btn-primary" data-act="circle-new">建一个圈子</button>
+      </div>
+
+      <div class="tab-switch circles-tabs" role="tablist">
+        <button role="tab" data-circle-scope="mine"
+                aria-selected="${mine}">我的圈子</button>
+        <button role="tab" data-circle-scope="all"
+                aria-selected="${!mine}">发现圈子</button>
+      </div>
+
+      <div id="circle-list"></div>`;
+
+    tabBar($(".circles-tabs"));
+    await loadCircles();
+  }
+
+  function paintCircles() {
+    const host = $("#circle-list");
+    if (!host) return;
+    const { items, hasMore, tab, query } = State.circles;
+
+    if (!items.length) {
+      const mineEmpty = tab === "mine" && !query;
+      host.innerHTML = mineEmpty
+        ? `<div class="empty">
+             <span class="glyph">◯</span>
+             <p>你还没加入任何圈子</p>
+             <p class="hint">去「发现圈子」看看，或者自己建一个 —— 圈子里发的东西只有成员看得见。</p>
+             <div class="empty-acts">
+               <button class="btn btn-ghost" data-circle-scope="all">去发现圈子</button>
+               <button class="btn btn-primary" data-act="circle-new">建一个圈子</button>
+             </div>
+           </div>`
+        : `<div class="empty">
+             <span class="glyph">◯</span>
+             <p>${query ? "没有搜到相关的圈子" : (tab === "mine" ? "你还没加入任何圈子" : "还没有人建过圈子")}</p>
+             <p class="hint">${query
+               ? "换个词试试，或者清空搜索看看全部。"
+               : "第一个圈子就交给你了 —— 点右上角那颗「建一个圈子」。"}</p>
+           </div>`;
+      return;
+    }
+
+    host.innerHTML = `<div class="circle-grid">${items.map(circleCard).join("")}</div>`
+      + (hasMore
+        ? `<div class="more-row"><button class="btn btn-ghost" data-act="circles-more">加载更多</button></div>`
+        : "");
+  }
+
+  async function loadCircles(append = false) {
+    const host = $("#circle-list");
+    if (!append && host) host.innerHTML = `<div class="load-hint">${cubeLoader()}</div>`;
+    const page = append ? State.circles.page + 1 : 1;
+    try {
+      const data = await Api.circles({
+        scope: State.circles.tab,
+        q: State.circles.query || "",
+        page,
+      });
+      State.circles = {
+        ...State.circles,
+        items: append ? [...State.circles.items, ...data.items] : data.items,
+        total: data.total,
+        page: data.page,
+        hasMore: data.has_more,
+      };
+      paintCircles();
+    } catch (error) {
+      if (host) {
+        host.innerHTML = `<div class="empty"><span class="glyph">⚠</span><p>${esc(error.message)}</p></div>`;
+      }
+    }
+  }
+
+  /* 建圈弹窗。刻意做成弹窗而不是一个整页：只有四个字段，
+     整页反而要处理「填了一半切走」「返回时草稿还在不在」这些事。 */
+  function openCircleModal() {
+    const topics = circleTopics();
+    openModal(`
+      <h2 class="display display-sm">建一个圈子</h2>
+      <p class="hint">圈子 = 一群人 + 只有这群人看得见的帖子。起个别人一眼看懂的名字，再写一句介绍。</p>
+      <div class="iris-rule iris-rule--fade" style="margin:1rem 0"></div>
+      <div class="stack">
+        <label class="field">
+          <span>圈子名</span>
+          <input class="input" id="circle-name" maxlength="20" autocomplete="off"
+                 placeholder="例如 红石研究所 / 末地跑酷队">
+        </label>
+        <label class="field">
+          <span>一句话介绍</span>
+          <input class="input" id="circle-intro" maxlength="60" autocomplete="off"
+                 placeholder="例如 每周分享一个红石作品，互相点评">
+        </label>
+        <div class="field">
+          <span>主题</span>
+          <div class="chip-row" id="circle-topic-row">
+            ${topics.map((topic, index) => `
+              <button type="button" class="chip" data-circle-topic="${esc(topic)}"
+                      aria-pressed="${index === 0}">${esc(topic)}</button>`).join("")}
+          </div>
+        </div>
+        <label class="field">
+          <span>详细说明（选填）</span>
+          <textarea class="textarea" id="circle-about" rows="4" maxlength="500"
+            placeholder="这个圈子打算一起做什么？比如：每周交一个作品；新手提问也可以。"></textarea>
+        </label>
+        <p class="hint">建好之后你就是圈主。你退出这个圈子时，它会自动交给最早加入的那一位；如果只剩你一个人，圈子会一起解散。</p>
+        <div class="row-between wrap" style="margin-top:.5rem">
+          <button class="btn btn-ghost" type="button" data-action="close-modal">取消</button>
+          <button class="btn btn-primary" type="button" data-act="circle-submit">创建圈子</button>
+        </div>
+      </div>`);
+    const nameInput = $("#circle-name");
+    if (nameInput) nameInput.focus();
+  }
+
+  async function submitCircleForm() {
+    const button = $("[data-act='circle-submit']");
+    const name = ($("#circle-name") || {}).value || "";
+    const intro = ($("#circle-intro") || {}).value || "";
+    const about = ($("#circle-about") || {}).value || "";
+    const topic = ($("#circle-topic-row .chip[aria-pressed='true']") || {}).dataset?.circleTopic || "";
+
+    if (!name.trim()) {
+      toast("先给圈子起个名字", "bad");
+      return;
+    }
+
+    const original = button ? button.textContent : "";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "创建中…";
+    }
+    try {
+      const circle = await Api.createCircle({ name, intro, about, topic });
+      closeModal();
+      // 列表缓存必须丢掉：新建的圈子要出现在「我的圈子」里
+      ViewCache.delete("circles");
+      State.circles.tab = "mine";
+      State.circles.items = [];
+      toast("圈子建好了，进去看看吧", "ok");
+      await setView("circle", { circleId: circle.id });
+    } catch (error) {
+      toast(error.message, "bad");
+      if (button) {
+        button.disabled = false;
+        button.textContent = original;
+      }
+    }
+  }
+
+  async function joinCircle(button) {
+    const id = Number(button.dataset.id);
+    if (!id) return;
+    button.disabled = true;
+    try {
+      const circle = await Api.joinCircle(id);
+      toast(`已加入「${circle.name}」`, "ok");
+      // 两个列表都脏了：加入会影响「我的圈子」，也会让「发现圈子」里那一张的按钮变样
+      ViewCache.delete("circles");
+      State.circles.items = [];
+      if (State.circle && State.circle.id === id) {
+        await renderCircle();          // 就在这个圈子的主页上：重画成「已加入」
+      } else {
+        await setView("circle", { circleId: id });
+      }
+    } catch (error) {
+      toast(error.message, "bad");
+      button.disabled = false;
+    }
+  }
+
+  async function leaveCircle(button) {
+    const id = Number(button.dataset.id);
+    if (!id) return;
+    const name = button.dataset.name || "这个圈子";
+    const isOwner = Boolean(State.circle && State.circle.id === id && State.circle.is_owner);
+    /* ！window.confirm 的正文由浏览器自己画，走不到 applyDynamic 那套 DOM 翻译，
+       所以这里显式过一次字典（t 支持 {name} 这种占位符）。
+       两句话的后果差得很远，圈主那句必须把「会解散」说清楚。 */
+    const message = I18n.t(
+      isOwner
+        ? "你是「{name}」的圈主。退出后它会交给最早加入的那位成员；\n如果圈子里只剩你一个人，圈子会直接解散，里面的帖子也会一起删除。\n\n确定退出吗？"
+        : "退出「{name}」？\n退出后就看不到这个圈子里的帖子了，你写过的帖子还留在里面。",
+      { name },
+    );
+    if (!window.confirm(message)) return;
+
+    button.disabled = true;
+    try {
+      const result = await Api.leaveCircle(id);
+      ViewCache.delete("circles");
+      State.circles.items = [];
+      if (result.dissolved) {
+        toast(`「${name}」解散了，里面的 ${result.post_count} 篇帖子一起删除了`, "ok");
+      } else if (result.successor) {
+        toast(`已退出，圈主交给了 ${result.successor.nickname}`, "ok");
+      } else {
+        toast("已退出圈子", "ok");
+      }
+      await setView("circles", { fresh: true });
+    } catch (error) {
+      toast(error.message, "bad");
+      button.disabled = false;
+    }
+  }
+
+  /* ---------------- 圈子主页 ---------------- */
+
+  async function renderCircle() {
+    if (!State.routeCircleId) {
+      await setView("circles");
+      return;
+    }
+    const view = $("#view");
+    view.innerHTML = `<div class="load-hint">${cubeLoader()}</div>`;
+
+    const circle = await Api.circle(State.routeCircleId);
+    State.circle = circle;
+    State.circlePosts = { items: [], total: 0, page: 1, hasMore: false };
+
+    const members = (circle.members || []).map((item) => `
+      <span class="maker">
+        ${avatar(item.user, "sm")}
+        <span class="maker__name">${esc(item.user.nickname)}</span>
+        ${item.role === "owner" ? `<span class="maker__role">圈主</span>` : ""}
+      </span>`).join("");
+
+    view.innerHTML = `
+      <div class="circle-view">
+        <button class="btn btn-ghost btn-sm post-back" data-act="circle-back">← 返回圈子列表</button>
+
+        <section class="panel panel--pad circle-hero">
+          <div class="circle-hero__top">
+            ${circleBadge(circle.name, true)}
+            <div class="circle-hero__id">
+              <h1 class="display display-md">${esc(circle.name)}</h1>
+              <p class="meta-line">${esc(circle.intro || "这个圈子还没写介绍。")}</p>
+              <div class="chip-row">
+                <span class="tag tag--iris">${esc(circle.topic || "综合")}</span>
+                <span class="tag">${circle.member_count} 位成员</span>
+                <span class="tag">${circle.post_count} 篇帖子</span>
+                ${circle.is_owner ? `<span class="tag">你是圈主</span>` : ""}
+              </div>
+            </div>
+          </div>
+
+          ${circle.about
+            ? `<div class="circle-about">${esc(circle.about).replace(/\n/g, "<br>")}</div>`
+            : ""}
+
+          <div class="circle-members">
+            <span class="eyebrow">成员</span>
+            ${members || `<span class="hint">还没有别人</span>`}
+          </div>
+
+          <div class="circle-actions">
+            ${circle.joined
+              ? `<button class="btn btn-primary" data-act="circle-write" data-id="${circle.id}">
+                   在圈子里发帖
+                 </button>
+                 <button class="btn btn-danger" data-act="circle-leave"
+                         data-id="${circle.id}" data-name="${esc(circle.name)}">退出圈子</button>`
+              : `<button class="btn btn-primary" data-act="circle-join"
+                         data-id="${circle.id}" data-name="${esc(circle.name)}">加入圈子</button>
+                 <span class="hint">加入之后才能看到圈子里发了什么</span>`}
+          </div>
+        </section>
+
+        <div id="circle-posts"></div>
+      </div>`;
+
+    mountSkins(view);
+    if (circle.joined) {
+      await loadCirclePosts(true);
+    } else {
+      paintCirclePosts();
+    }
+  }
+
+  function paintCirclePosts() {
+    const host = $("#circle-posts");
+    const circle = State.circle;
+    if (!host || !circle) return;
+
+    if (!circle.joined) {
+      host.innerHTML = `
+        <div class="circle-gate panel panel--pad">
+          <span class="glyph" aria-hidden="true">🔒</span>
+          <p>加入之后才能看到圈子里的帖子</p>
+          <p class="hint">圈子里的内容只对成员可见 —— 这也是很多人愿意在这里说话的原因。</p>
+          <button class="btn btn-primary" data-act="circle-join"
+                  data-id="${circle.id}" data-name="${esc(circle.name)}">加入圈子</button>
+        </div>`;
+      return;
+    }
+
+    const { items, hasMore } = State.circlePosts;
+    if (!items.length) {
+      host.innerHTML = `
+        <div class="empty">
+          <span class="glyph">◈</span>
+          <p>这个圈子里还没有帖子</p>
+          <p class="hint">第一篇就交给你了 —— 上面那颗「在圈子里发帖」。</p>
+        </div>`;
+      return;
+    }
+
+    host.innerHTML = `<div class="post-grid">${items.map((item) => postCard(item, { hideCircle: true })).join("")}</div>`
+      + (hasMore
+        ? `<div class="more-row"><button class="btn btn-ghost" data-act="circle-posts-more">加载更多</button></div>`
+        : "");
+  }
+
+  async function loadCirclePosts(reset = false) {
+    const host = $("#circle-posts");
+    if (!State.circle) return;
+    if (reset && host) host.innerHTML = `<div class="load-hint">${cubeLoader()}</div>`;
+    const page = reset ? 1 : State.circlePosts.page + 1;
+    try {
+      const data = await Api.circlePosts(State.circle.id, { page });
+      State.circlePosts = {
+        items: reset ? data.items : [...State.circlePosts.items, ...data.items],
+        total: data.total,
+        page: data.page,
+        hasMore: data.has_more,
+      };
+      paintCirclePosts();
+    } catch (error) {
+      if (host) {
+        host.innerHTML = `<div class="empty"><span class="glyph">⚠</span><p>${esc(error.message)}</p></div>`;
+      }
+    }
+  }
+
   /* ---------------- 编辑器（富文本） ----------------
      Word 那种手感：选中一段可以加粗 / 变色 / 改字号，图片和附件能插在
      正文的任何位置。
@@ -2142,7 +2712,10 @@
   function newEditorState(post) {
     const meId = (Store.user || {}).id;
     if (!post) {
-      return { id: 0, title: "", credits: [], blocks: [] };
+      // circle：这篇帖子要发到哪个圈子里（null = 公开发在「帖子」里）。
+      // ！草稿状态里也带着它 —— 用户写到一半切走、回来接着写，
+      //   发出去的地方不能变。
+      return { id: 0, title: "", credits: [], blocks: [], circle: null };
     }
     /* 作者本人由后端固定排在名单最前面，编辑区上方已经给他单独一个「作者」
        标签，这里只保留「额外添加的人」。
@@ -2152,6 +2725,10 @@
     return {
       id: post.id,
       title: post.title || "",
+      // ！编辑已有帖子时**不能改它发在哪儿**：圈子帖改到广场上，等于把
+      //   圈子里说过的话搬到全站；广场帖改到圈子里，等于把公开内容藏起来。
+      //   所以这里只读回来显示，不接受切换（后端 update_post 也不动 circle_id）。
+      circle: post.circle ? { id: post.circle.id, name: post.circle.name || "" } : null,
       credits: (post.credits || [])
         .filter((item) => item.user.id !== meId && item.user.id !== authorId)
         .map((item) => ({
@@ -2250,17 +2827,47 @@
       }
     }
 
+    /* 这次要发到哪个圈子（v0.34）：
+       · 编辑已有帖子 → 跟着帖子走（post.circle），不能在编辑器里改
+       · 在圈子里新写 → 地址里带着 /circles/7/new，进来先问一次接口
+         ！为什么要问接口而不是从上一页传过来：刷新、直接粘链接、前进后退
+           都会绕开「上一页」，那时名字和权限就都没了。而且这次调用同时
+           也是权限检查 —— 不是成员会拿到 403，正好在这里把话说清楚。
+    */
+    let circle = post ? post.circle : null;
+    if (!post && State.routeCircleId) {
+      try {
+        circle = await Api.circle(State.routeCircleId);
+      } catch (error) {
+        view.innerHTML = `<div class="empty">
+          <span class="glyph">⚠</span><p>${esc(error.message)}</p></div>`;
+        return;
+      }
+      if (!circle.joined) {
+        view.innerHTML = `<div class="empty">
+          <span class="glyph">⚠</span><p>加入这个圈子之后，才能在里面发帖</p></div>`;
+        return;
+      }
+    }
+
     const target = post ? post.id : 0;
-    if (!State.editor || State.editor.id !== target) {
+    const targetCircle = circle ? circle.id : 0;
+    const draftedCircle = State.editor && State.editor.circle ? State.editor.circle.id : 0;
+    // ！除了帖子 id，发帖的去处也算「换了一篇」：在 A 圈写了一半切到 B 圈，
+    //   草稿必须重来，不然会把 A 圈的草稿发到 B 圈去。
+    if (!State.editor || State.editor.id !== target || draftedCircle !== targetCircle) {
       State.editor = newEditorState(post);
+      State.editor.circle = circle ? { id: circle.id, name: circle.name || "" } : null;
     }
 
     view.innerHTML = `
       <div class="editor">
         <div class="editor__head">
           <div class="titles">
-            <span class="eyebrow eyebrow--iris">${post ? "Edit" : "New post"}</span>
-            <h1 class="display display-md">${post ? "编辑帖子" : "写一篇帖子"}</h1>
+            <span class="eyebrow eyebrow--iris">${post ? "Edit" : (circle ? "New in circle" : "New post")}</span>
+            <h1 class="display display-md">${post
+              ? "编辑帖子"
+              : (circle ? `在「${esc(circle.name)}」里写一篇` : "写一篇帖子")}</h1>
           </div>
           <div class="editor__head-actions">
             <button class="btn btn-ghost" data-act="post-cancel">取消</button>
@@ -2268,6 +2875,18 @@
               ${post ? "保存修改" : "发布"}
             </button>
           </div>
+        </div>
+
+        <!-- 发到哪儿必须写在最显眼的位置：同一条内容发在广场上和发在圈子里，
+             看到的人可能是「全站所有人」和「这个圈子的几个人」，差得很远。 -->
+        <div class="editor-where${circle ? " editor-where--circle" : ""}">
+          ${circle
+            ? `<span class="eyebrow">发到圈子</span>
+               <b>${esc(circle.name)}</b>
+               <span class="hint">只有这个圈子的成员看得到</span>`
+            : `<span class="eyebrow">发到</span>
+               <b>帖子广场</b>
+               <span class="hint">全站所有登录的人都能看到</span>`}
         </div>
 
         <input class="input editor__title" id="editor-title"
@@ -2865,6 +3484,10 @@
           user_id: item.user_id,
           role: item.role,
         })),
+        // 发到哪个圈子（v0.34）。0 = 公开发在「帖子」广场上。
+        // ！编辑已有帖子时后端不认这个字段（update_post 不碰 circle_id），
+        //   这里照传只是为了让同一个请求体两边都能用。
+        circle_id: editorData.circle ? editorData.circle.id : 0,
       };
       const saved = editing
         ? await Api.updatePost(editorData.id, payload)
@@ -2872,8 +3495,18 @@
       State.editor = null;
       // 列表的缓存必须丢掉：刚发的帖子得出现在里面
       ViewCache.delete("posts");
-      await setView("post", { postId: saved.id });
-      toast(editing ? "改动已保存" : "发布成功", "ok");
+      // 圈子页的帖子列表和「几篇帖子」那个数字也变了
+      ViewCache.delete("circles");
+      if (saved.circle) {
+        // 圈子帖：回到圈子看它更顺 —— 那里才是它该出现的地方。
+        // 走帖子详情也行，但中间会先看到「返回帖子列表」那种错位感。
+        State.circlePosts = { items: [], total: 0, page: 1, hasMore: false };
+        await setView("circle", { circleId: saved.circle.id });
+        toast(editing ? "改动已保存" : "发出去了，圈子里的成员都能看到了", "ok");
+      } else {
+        await setView("post", { postId: saved.id });
+        toast(editing ? "改动已保存" : "发布成功", "ok");
+      }
     } catch (error) {
       toast(error.message, "bad");
     } finally {
@@ -2942,11 +3575,16 @@
     }
     if (target.closest("[data-act='post-new']")) {
       State.editor = null;   // 新帖：把上一次没发出去的草稿丢掉
-      await setView("editor", { postId: 0 });
+      await setView("editor", { postId: 0, circleId: 0 });
       return true;
     }
     if (target.closest("[data-act='post-back']")) {
-      await setView("posts");
+      // 圈子里的帖子回圈子，广场上的回列表（按钮上的字也是这么写的）
+      if (State.post && State.post.circle) {
+        await setView("circle", { circleId: State.post.circle.id });
+      } else {
+        await setView("posts");
+      }
       return true;
     }
     if (target.closest("[data-act='posts-more']")) {
@@ -2971,11 +3609,83 @@
       return true;
     }
 
+    /* ---- 圈子（v0.34）----
+       切档、进入、加入、退出、建圈、以及在圈子里写帖子。 */
+    const circleScope = target.closest("[data-circle-scope]");
+    if (circleScope) {
+      State.circles.tab = circleScope.dataset.circleScope === "all" ? "all" : "mine";
+      // 换一档等于换一批数据，从第一页重新拉（理由同帖子列表的 scope）
+      State.circles.items = [];
+      await renderCircles();
+      return true;
+    }
+    const circleOpen = target.closest("[data-act='circle-open']");
+    if (circleOpen) {
+      await setView("circle", { circleId: circleOpen.dataset.id });
+      return true;
+    }
+    if (target.closest("[data-act='circle-back']")) {
+      await setView("circles");
+      return true;
+    }
+    const circleJoin = target.closest("[data-act='circle-join']");
+    if (circleJoin) {
+      await joinCircle(circleJoin);
+      return true;
+    }
+    const circleLeave = target.closest("[data-act='circle-leave']");
+    if (circleLeave) {
+      await leaveCircle(circleLeave);
+      return true;
+    }
+    const circleWrite = target.closest("[data-act='circle-write']");
+    if (circleWrite) {
+      State.editor = null;   // 新帖：把上一次没发出去的草稿丢掉
+      await setView("editor", { postId: 0, circleId: circleWrite.dataset.id });
+      return true;
+    }
+    if (target.closest("[data-act='circle-new']")) {
+      openCircleModal();
+      return true;
+    }
+    if (target.closest("[data-act='circle-submit']")) {
+      await submitCircleForm();
+      return true;
+    }
+    if (target.closest("[data-act='circles-more']")) {
+      await loadCircles(true);
+      return true;
+    }
+    if (target.closest("[data-act='circle-posts-more']")) {
+      await loadCirclePosts();
+      return true;
+    }
+    const circleSearchClear = target.closest("[data-act='circle-search-clear']");
+    if (circleSearchClear) {
+      State.circles.query = "";
+      const input = $("#circle-search");
+      if (input) input.value = "";
+      circleSearchClear.classList.add("hidden");
+      await loadCircles();
+      return true;
+    }
+    // 建圈弹窗里的主题：单选。和资料页那排 chip 不同 —— 那里可以多选，
+    // 这里选两个主题没有任何意义，所以只让一个亮着。
+    const topicChip = target.closest("[data-circle-topic]");
+    if (topicChip) {
+      $$("#circle-topic-row .chip").forEach((chip) => {
+        chip.setAttribute("aria-pressed", String(chip === topicChip));
+      });
+      return true;
+    }
+
     /* ---- 帖子详情 ---- */
     const editButton = target.closest("[data-act='post-edit']");
     if (editButton) {
       State.editor = null;   // 重新编辑：从服务端拉最新的一份，不要用旧草稿
-      await setView("editor", { postId: editButton.dataset.id });
+      // ！circleId 必须显式传 0：不传的话会沿用上一次打开过的圈子 id，
+      //   地址栏和「发到哪儿」那一行就会指向一个根本不相干的圈子。
+      await setView("editor", { postId: editButton.dataset.id, circleId: 0 });
       return true;
     }
     const likeButton = target.closest("[data-act='post-like']");
@@ -3016,10 +3726,15 @@
     /* ---- 编辑器 ---- */
     if (target.closest("[data-act='post-cancel']")) {
       if (!window.confirm("离开编辑器？还没发布的内容会丢掉。")) return true;
-      const backTo = State.editor && State.editor.id ? "post" : "posts";
+      // 取消之后回哪儿：编辑已有帖子 → 那篇帖子；在圈子里新写 → 回到圈子；
+      // 在广场上新写 → 帖子列表。按原路返回，用户不会「咦我怎么跑到别处了」。
+      const backTo = State.editor && State.editor.id
+        ? "post"
+        : (State.editor && State.editor.circle ? "circle" : "posts");
       const backId = State.editor ? State.editor.id : 0;
+      const backCircle = State.editor && State.editor.circle ? State.editor.circle.id : 0;
       State.editor = null;
-      await setView(backTo, { postId: backId });
+      await setView(backTo, { postId: backId, circleId: backCircle });
       return true;
     }
     const saveButton = target.closest("[data-act='post-save']");
@@ -3304,6 +4019,17 @@
         await loadPosts();
       }, 300);
       const clear = $("[data-act='post-search-clear']");
+      if (clear) clear.classList.toggle("hidden", !value.trim());
+      return;
+    }
+    if (target.id === "circle-search") {
+      const value = target.value;
+      window.clearTimeout(circleSearchTimer);
+      circleSearchTimer = window.setTimeout(async () => {
+        State.circles.query = value.trim();
+        await loadCircles();
+      }, 300);
+      const clear = $("[data-act='circle-search-clear']");
       if (clear) clear.classList.toggle("hidden", !value.trim());
       return;
     }
@@ -4504,6 +5230,8 @@
 
   const RENDERERS = {
     discover: renderDiscover,
+    circles: renderCircles,
+    circle: renderCircle,
     posts: renderPosts,
     post: renderPost,
     editor: renderEditor,
@@ -4535,6 +5263,18 @@
     } catch (error) {
       toast("后端服务未启动，请先运行 python run.py", "bad");
     }
+
+    /* 侧栏那盏灯的第一次测量。
+       ！90 秒一次就够：它要的是「有没有人在这儿」，不是监控面板。
+         切到后台就停、切回来补一枪 —— 藏在后台的标签页不该一直在打接口。 */
+    pingServer();
+    let netTimer = window.setInterval(() => {
+      if (!document.hidden) pingServer();
+    }, 90 * 1000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) pingServer();
+    });
+    window.addEventListener("beforeunload", () => window.clearInterval(netTimer));
 
     $("#btn-refresh").addEventListener("click", async () => {
       await refreshOverview();

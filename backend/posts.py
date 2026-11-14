@@ -528,6 +528,25 @@ _AUTHOR_COLS = (
 )
 
 
+def _circle_of(row: sqlite3.Row | dict) -> dict | None:
+    """这篇帖子发在哪个圈子里（v0.34）。不在圈子里返回 None。
+
+    ！带圈子时的名字来自 SQL 里那句 `LEFT JOIN circles cp`，别名是 circle_name。
+      查同名列时 sqlite3.Row 只认**第一个**，所以这里必须用别名，
+      不能让 circles.name 和 posts 自己的列撞上。
+    """
+    keys = row.keys()
+    if "circle_id" not in keys:
+        return None
+    circle_id = int(row["circle_id"] or 0)
+    if not circle_id:
+        return None
+    return {
+        "id": circle_id,
+        "name": (row["circle_name"] if "circle_name" in keys else "") or "",
+    }
+
+
 def _credits_map(
     conn: sqlite3.Connection, post_ids: list[int]
 ) -> dict[int, list[dict]]:
@@ -590,6 +609,7 @@ def post_card(conn: sqlite3.Connection, row: sqlite3.Row, author: dict,
         "excerpt": (row["plain"] or "")[:120],
         "author": author,
         "credits": credits,
+        "circle": _circle_of(row),
         "like_count": int(row["like_count"]),
         "comment_count": int(row["comment_count"]),
         "share_count": int(row["share_count"]),
@@ -619,6 +639,7 @@ def post_detail(conn: sqlite3.Connection, row: sqlite3.Row, author: dict,
         "blocks": blocks,
         "author": author,
         "credits": _credits_of(conn, int(row["id"]), author),
+        "circle": _circle_of(row),
         "like_count": int(row["like_count"]),
         "comment_count": int(row["comment_count"]),
         "share_count": int(row["share_count"]),
@@ -640,25 +661,48 @@ def feed(
     *,
     keyword: str = "",
     author_id: int | None = None,
+    circle_id: int | None = None,
     page: int = 1,
     limit: int = FEED_PAGE,
 ) -> dict:
-    """帖子列表。按时间倒序 —— 需求要的是「最近发布的实时帖子」。"""
+    """帖子列表。按时间倒序 —— 需求要的是「最近发布的实时帖子」。
+
+    circle_id 决定看哪一片（v0.34）：
+      传了圈子 id  → 只看这个圈子里的帖子（调用方必须先验成员身份）
+      没传（None） → **公开时间线**，也就是 circle_id = 0 的那些
+    ！这两个分支是圈子私密性的最后一道闸。漏掉「没传时过滤 circle_id = 0」，
+      圈子里的帖子就会顺着首页时间线漏给全站 —— 而圈子的全部意义就是
+      「只有圈子里的人看得见」。所以这条过滤不是在调用方做，而是**在这里**：
+      所有列出帖子的入口都会经过这个函数。
+    """
     page = max(1, int(page or 1))
     limit = max(1, min(int(limit or FEED_PAGE), 50))
     offset = (page - 1) * limit
 
-    where = ["p.status = 'published'"]
+    where: list[str] = []
     params: list[Any] = []
 
     if author_id:
         # 看自己的帖子时连隐藏/删除的也一并给 —— 否则「我删掉的那篇还能不能找回来」
         # 在界面上完全无从判断。看别人的仍然只给已发布的。
         if viewer_id and int(author_id) == int(viewer_id):
-            where = ["p.author_id = ?"]
+            where.append("p.author_id = ?")
         else:
             where.append("p.author_id = ?")
+            where.append("p.status = 'published'")
         params.append(int(author_id))
+    else:
+        where.append("p.status = 'published'")
+
+    own = bool(author_id and viewer_id and int(author_id) == int(viewer_id))
+    if circle_id is not None:
+        where.append("p.circle_id = ?")
+        params.append(int(circle_id))
+    elif not own:
+        # ！没指名圈子时只给公开发布的。看自己的帖子（own）是唯一例外：
+        #   自己发在圈子里的帖必须能在「我发的」里找到，哪怕已经退圈了，
+        #   否则他会发现自己写过的东西凭空消失，而且哪里都找不着。
+        where.append("p.circle_id = 0")
 
     clause, extra = _not_in("p.author_id", hidden_user_ids(conn, viewer_id))
     if clause:
@@ -680,8 +724,10 @@ def feed(
 
     rows = conn.execute(
         f"""
-        SELECT p.*, {_AUTHOR_COLS}
-        FROM posts p JOIN users u ON u.id = p.author_id
+        SELECT p.*, {_AUTHOR_COLS}, cp.name AS circle_name
+        FROM posts p
+        JOIN users u ON u.id = p.author_id
+        LEFT JOIN circles cp ON cp.id = p.circle_id
         WHERE {sql_where}
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT ? OFFSET ?
@@ -705,13 +751,48 @@ def feed(
 
 def get_row(conn: sqlite3.Connection, post_id: int) -> sqlite3.Row:
     row = conn.execute(
-        f"SELECT p.*, {_AUTHOR_COLS} FROM posts p JOIN users u ON u.id = p.author_id "
+        f"SELECT p.*, {_AUTHOR_COLS}, cp.name AS circle_name "
+        "FROM posts p JOIN users u ON u.id = p.author_id "
+        "LEFT JOIN circles cp ON cp.id = p.circle_id "
         "WHERE p.id = ?",
         (post_id,),
     ).fetchone()
     if row is None:
         raise PostError("这篇帖子不存在，可能已经被删除了", 404)
     return row
+
+
+def _is_admin(conn: sqlite3.Connection, user_id: int) -> bool:
+    row = conn.execute("SELECT is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
+    return bool(row and row["is_admin"])
+
+
+def assert_visible(conn: sqlite3.Connection, viewer_id: int | None,
+                   row: sqlite3.Row | dict) -> None:
+    """这篇帖子对这个人可不可见；不可见就当成「不存在」（404）。
+
+    ！只管**圈子**这一层（v0.34）。帖子本身的状态（published / hidden /
+      deleted）交给各个调用点按自己的宽松度判断：作者和管理员要能看到被
+      下架的那篇，普通用户不能。两件事分开，是因为它们要说的话不一样。
+
+    ！为什么圈外的访问、点赞、评论、看评论全都要过这一关：
+      圈子的私密性不是「首页不列出」就够了 —— 知道编号的人可以直接调
+      /api/posts/7/comments 把里面的对话读走。所以每一个碰得到帖子内容
+      （或能往上面留东西）的入口都得先问一句「你能看见它吗」。
+
+    报 404 而不是 403，理由同 read_post：403 等于告诉对方「这里确实有
+    东西，只是你看不了」，光凭这一点就能把每个圈子有多少帖子数出来。
+    """
+    circle_id = int(row["circle_id"] or 0)
+    if not circle_id:
+        return
+    if viewer_id:
+        if int(row["author_id"]) == int(viewer_id) or _is_admin(conn, int(viewer_id)):
+            return
+        from . import circles   # 局部导入：circles 模块顶层引用了本模块
+        if circles.is_member(conn, int(viewer_id), circle_id):
+            return
+    raise PostError("这篇帖子不存在，可能已经被删除了", 404)
 
 
 def read_post(conn: sqlite3.Connection, viewer_id: int | None, post_id: int,
@@ -726,6 +807,10 @@ def read_post(conn: sqlite3.Connection, viewer_id: int | None, post_id: int,
     if viewer_id and int(row["author_id"]) in set(hidden_user_ids(conn, viewer_id)):
         raise PostError("这篇帖子不存在，可能已经被删除了", 404)
 
+    # 圈子帖：不是这个圈子的成员，就当它不存在（v0.34）。
+    # ！作者本人例外：退圈之后他还得能找回自己写的东西（见 feed 里那段）。
+    assert_visible(conn, viewer_id, row)
+
     # 浏览量只记「别人看的」，作者自己反复刷新不该把数字刷上去
     if count_view and viewer_id and int(row["author_id"]) != int(viewer_id):
         conn.execute("UPDATE posts SET view_count = view_count + 1 WHERE id = ?", (post_id,))
@@ -733,11 +818,6 @@ def read_post(conn: sqlite3.Connection, viewer_id: int | None, post_id: int,
         row = get_row(conn, post_id)
 
     return post_detail(conn, row, author_card(row), viewer_id)
-
-
-def _is_admin(conn: sqlite3.Connection, user_id: int) -> bool:
-    row = conn.execute("SELECT is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
-    return bool(row and row["is_admin"])
 
 
 # ---------------------------------------------------------------- 写入
@@ -784,10 +864,26 @@ def create_post(
     title: Any,
     blocks: Any,
     credits: Any = None,
+    circle_id: Any = 0,
 ) -> dict:
     clean_title = validate_title(title)
     clean_blocks, plain = validate_blocks(conn, int(user["id"]), blocks)
     clean_credits = validate_credits(conn, int(user["id"]), credits)
+
+    # 发到圈子里（v0.34）：先确认圈子还在、而且这个人是成员。
+    # ！放在所有内容校验之后、频率限制之前：内容有问题时先告诉他改哪儿，
+    #   而不是先报「你不在这个圈子里」。
+    clean_circle = 0
+    if circle_id:
+        from . import circles   # 局部导入：circles 模块顶层引用了本模块
+        try:
+            wanted = int(circle_id)
+        except (TypeError, ValueError):
+            # ！circle_id 在 schemas 里是 Any（宽松类型），"abc" 会一路走到这里。
+            #   不接住的话 int() 抛 ValueError → 500，前端只会看到「操作失败」。
+            raise PostError("圈子参数不正确") from None
+        row = circles.postable_circle(conn, int(user["id"]), wanted)
+        clean_circle = int(row["id"])
 
     # ！频率限制放在所有校验之后：先把内容问题告诉用户（改一下就能重发），
     #   而不是先报「发得太多了」、改完再报「标题太长」—— 那样要来回好几次。
@@ -797,13 +893,15 @@ def create_post(
 
     stamp = now_ts()
     cursor = conn.execute(
-        "INSERT INTO posts (author_id, title, body, plain, status, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, 'published', ?, 0)",
+        "INSERT INTO posts (author_id, title, body, plain, status, circle_id, "
+        "created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, 'published', ?, ?, 0)",
         (
             int(user["id"]),
             clean_title,
             json.dumps(clean_blocks, ensure_ascii=False),
             plain,
+            clean_circle,
             stamp,
         ),
     )
@@ -892,6 +990,7 @@ def toggle_like(conn: sqlite3.Connection, user: dict, post_id: int) -> dict:
     row = get_row(conn, post_id)
     if row["status"] != "published":
         raise PostError("这篇帖子当前不能被点赞")
+    assert_visible(conn, int(user["id"]), row)
     uid = int(user["id"])
 
     exists = conn.execute(
@@ -938,7 +1037,9 @@ def list_comments(
     page: int = 1,
     limit: int = COMMENT_PAGE,
 ) -> dict:
-    get_row(conn, post_id)
+    row = get_row(conn, post_id)
+    # ！评论列表也是内容。圈子帖的评论区对圈外人一律不存在。
+    assert_visible(conn, viewer_id, row)
     page = max(1, int(page or 1))
     limit = max(1, min(int(limit or COMMENT_PAGE), 100))
     offset = (page - 1) * limit
@@ -983,6 +1084,7 @@ def add_comment(conn: sqlite3.Connection, user: dict, post_id: int, content: Any
     row = get_row(conn, post_id)
     if row["status"] != "published":
         raise PostError("这篇帖子当前不能评论")
+    assert_visible(conn, int(user["id"]), row)
     clean = validate_comment(content)
     flood = _comment_flood(conn, int(user["id"]))
     if flood:
@@ -1021,6 +1123,9 @@ def delete_comment(conn: sqlite3.Connection, user: dict, post_id: int, comment_i
         raise PostError("这条评论不存在", 404)
 
     uid = int(user["id"])
+    # 圈子帖的评论，圈外人连「这条评论不存在」都不该拿到 ——
+    # 先按帖子可见性挡一道，再谈是不是你的评论。
+    assert_visible(conn, uid, get_row(conn, post_id))
     # 评论作者本人，或者帖子的作者（楼主有权清理自己帖子下面的评论），或者管理员
     if uid not in (int(row["user_id"]), int(row["author_id"])) and not _is_admin(conn, uid):
         raise PostError("只能删除自己的评论", 403)
@@ -1044,6 +1149,15 @@ def share(
     row = get_row(conn, post_id)
     if row["status"] != "published":
         raise PostError("这篇帖子当前不能被转发")
+    assert_visible(conn, int(user["id"]), row)
+
+    # ！圈子帖不能转发（v0.34）。转发是「把内容递给站内某个具体的人」，
+    #   而圈子的全部意义是「这些话只有圈子里的人看得到」——
+    #   允许转发等于给圈子的私密性开了一扇后门：收件人点开是 404，
+    #   但通知里已经带上了标题，而标题往往就是内容本身。
+    #   要讨论圈子里的事，就进圈子说。
+    if int(row["circle_id"] or 0):
+        raise PostError("圈子里的帖子不能转发给圈外的人")
 
     if not isinstance(target_ids, list) or not target_ids:
         raise PostError("请选择要转发给谁")
@@ -1395,8 +1509,10 @@ def admin_list(
     ).fetchone()[0])
     rows = conn.execute(
         f"""
-        SELECT p.*, {_AUTHOR_COLS}
-        FROM posts p JOIN users u ON u.id = p.author_id
+        SELECT p.*, {_AUTHOR_COLS}, cp.name AS circle_name
+        FROM posts p
+        JOIN users u ON u.id = p.author_id
+        LEFT JOIN circles cp ON cp.id = p.circle_id
         WHERE {sql_where}
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT ? OFFSET ?
@@ -1411,6 +1527,9 @@ def admin_list(
             "title": row["title"],
             "excerpt": (row["plain"] or "")[:160],
             "author": author_card(row),
+            # 圈子帖也要出现在后台的帖子列表里，否则它就成了没人能审的内容。
+            # circle 为空表示这是一篇公开发布的帖子。
+            "circle": _circle_of(row),
             "status": row["status"],
             "status_label": STATUS_LABEL.get(row["status"], row["status"]),
             "like_count": int(row["like_count"]),

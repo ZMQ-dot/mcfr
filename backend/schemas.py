@@ -422,6 +422,19 @@ class PostIn(BaseModel):
     title: Any = ""
     blocks: Any = Field(default_factory=list)
     credits: Any = Field(default_factory=list)
+    # 发到哪个圈子里（v0.34）。0 / 不传 = 公开发在「帖子」模块。
+    # ！同样只在这里放行任何形状，真正的校验（圈子在不在、是不是成员）
+    #   在 backend/circles.py 的 postable_circle 里。
+    circle_id: Any = 0
+
+
+class CircleIn(BaseModel):
+    """建圈子。约束同样全部在 backend/circles.py 里。"""
+
+    name: Any = ""
+    intro: Any = ""
+    about: Any = ""
+    topic: Any = ""
 
 
 class PostCommentIn(BaseModel):

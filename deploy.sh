@@ -16,13 +16,13 @@
 #
 #  常用开关：
 #      --dry-run                     只打印要做什么，不改任何东西（先跑这个）
-#      --domain pccode.cn            指定域名（默认自动沿用已配置的）
+#      --domain mcfr.cn              指定域名（默认自动沿用已配置的）
 #      --port 8010                   换端口（默认自动沿用已配置的）
 #      --email you@example.com       申请证书用的邮箱
 #      --zip /tmp/new.zip            指定发布包
 #      --from-dir /path/to/project   从指定目录打包
-#      --no-https / --no-firewall / --no-nginx / --no-install
-#                                    跳过对应环节
+#      --no-https / --no-firewall / --no-nginx / --no-install / --no-www
+#                                    跳过对应环节（www 子域默认一起服务）
 #      --skip-deps                   跳过 pip install
 #      --import-from /srv/mcfr       从旧安装目录搬 data 和 .env 过来（换目录结构时用一次）
 #      --rollback 20260924-143000    回滚到某次升级之前
@@ -142,6 +142,11 @@ DO_DEPS=1
 DO_INSTALL=1                # 缺的系统包自动 apt 装
 DO_FIREWALL=1               # 自动配 ufw
 DO_HTTPS=1                  # 自动申请证书
+# ！同时服务 www.<域名>。默认开：老启动器（启动器/src/main/settings.ts）里
+#   写死的地址是 https://www.mcfr.cn，只配裸域的话它直接连不上。
+#   不想要：--no-www
+DO_WWW=1
+
 CERT_EMAIL=""
 FROM_DIR=""                 # 自打包的源目录；留空就用脚本所在目录
 SRC_DIR=""                  # 实际使用的源目录，运行时确定
@@ -149,10 +154,16 @@ IMPORT_FROM=""
 ROLLBACK_TS=""
 DRY_RUN=0
 
+# 「另一个域名」和「nginx 里要写的 server_name 列表」。
+# ！先给默认值：脚本开了 set -u，没初始化就引用会直接报未定义。
+ALT_DOMAIN=""
+SERVER_NAMES=""
+
 # 证书探测的结果：第 10 步（ngi​​nx）填，第 13 步（HTTPS）用。
 # ！先给默认值：脚本开了 set -u，没初始化就在后面的分支里引用会直接报未定义。
 CERT_FULL=""                # 证书链完整路径
 CERT_KEY=""                 # 私钥路径
+CERT_DIR=""                 # /etc/letsencrypt/live/<名字> 目录（补签时要用它定 --cert-name）
 CERT_SOURCE="none"           # none / letsencrypt / manual
 SSL_LINES=""                # 拼进 nginx 配置的 443 那几行
 
@@ -192,6 +203,8 @@ while [[ $# -gt 0 ]]; do
         --no-install)   DO_INSTALL=0; shift ;;
         --no-firewall)  DO_FIREWALL=0; shift ;;
         --no-https)     DO_HTTPS=0; shift ;;
+        --www)          DO_WWW=1; shift ;;
+        --no-www)       DO_WWW=0; shift ;;
         --skip-deps)    DO_DEPS=0; shift ;;
         --dry-run)      DRY_RUN=1; shift ;;
         -h|--help)      usage ;;
@@ -412,6 +425,40 @@ fi
 APP_PORT="$(detect_port)"
 DOMAIN="$(detect_domain)"
 
+# ---- 裸域 / www 的两个名字 ----
+#
+# DOMAIN 是「主名字」，来源可能是 --domain，也可能是现有 nginx 里的 server_name。
+# ALT_DOMAIN 是「另一个名字」：
+#   DOMAIN = mcfr.cn      → ALT = www.mcfr.cn
+#   DOMAIN = www.mcfr.cn  → ALT = mcfr.cn（把 www. 去掉）
+#
+# ！老服务器上常见的是 www.mcfr.cn（当年只签了 www 的证书），
+#   而新默认值是裸域。两种都得能打开，否则换域名那天启动器就断了。
+if [[ $DO_WWW -eq 1 ]]; then
+    if [[ "$DOMAIN" == www.* ]]; then
+        ALT_DOMAIN="${DOMAIN#www.}"
+    else
+        ALT_DOMAIN="www.$DOMAIN"
+    fi
+
+    # ！两个名字会被签进同一张证书，而 ACME 要求每个名字都能解析到一台
+    #   肯应答的机器。少一条 A 记录，整张证书都签不下来 —— 结果是一个
+    #   本来能上 HTTPS 的站点被拖成纯 HTTP。所以解析不到就自动退回单域名，
+    #   并且说清楚原因（不是静默降级）。
+    if command -v getent >/dev/null 2>&1 && ! getent hosts "$ALT_DOMAIN" >/dev/null 2>&1; then
+        warn "$ALT_DOMAIN 解析不到（没有 DNS 记录），本次只服务 $DOMAIN"
+        warn "  要让两个都能开：给它加一条 A 记录指向这台机器，再重跑一次"
+        DO_WWW=0
+    fi
+fi
+
+if [[ $DO_WWW -eq 1 ]]; then
+    SERVER_NAMES="$DOMAIN $ALT_DOMAIN"
+else
+    ALT_DOMAIN=""
+    SERVER_NAMES="$DOMAIN"
+fi
+
 cat <<BANNER
 
   mcfr 部署 / 升级脚本
@@ -419,10 +466,19 @@ cat <<BANNER
     程序目录 $APP_DIR
     数据目录 $SHARED_DIR
     监听     http://127.0.0.1:$APP_PORT
-    域名     $DOMAIN
+    域名     $SERVER_NAMES
     备份保留 $KEEP_BACKUPS 份
     （发布包在第 2 步确定）
 BANNER
+
+# ！detect_domain() 会优先沿用现有 nginx 里的 server_name，这是为了避免升级时
+#   把线上域名悄悄改掉。副作用是：从旧域名（pccode.cn）迁移过来的老站点，
+#   只要不显式传 --domain，就会一直停在旧域名上，而脚本全程绿灯、看不出异常。
+#   所以这里把「你现在用的不是代码里的默认域名」明说一次。
+if [[ "$DOMAIN" != "$DEFAULT_DOMAIN" ]]; then
+    dim "域名是从现有 nginx / --domain 沿用的，不是默认的 $DEFAULT_DOMAIN"
+    dim "  要切到默认域名：sudo bash $0 --domain $DEFAULT_DOMAIN"
+fi
 
 [[ $DRY_RUN -eq 1 ]] && warn "dry-run 模式：只打印要做什么，不真的执行"
 
@@ -976,9 +1032,22 @@ else
     # 两处证书目录都认：
     #   /etc/letsencrypt/live/<域名>/   certbot 签的
     #   /etc/ssl/<服务名>/               自己放的（阿里云 / 腾讯云的免费证书）
-    if [[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
-        CERT_FULL="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
-        CERT_KEY="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+    #
+    # ！certbot 的目录名跟着「第一个 -d」走，所以 www 和裸域可能是两个
+    #   不同的目录。只找其中一个的话，另一台服务器上就会误判成「没有证书」，
+    #   然后凭空把一个本来能用的 HTTPS 站点降级成 http。两个都找。
+    CERT_DIR=""
+    for _cand in "$DOMAIN" "$ALT_DOMAIN"; do
+        [[ -n "$_cand" ]] || continue
+        if [[ -f "/etc/letsencrypt/live/$_cand/fullchain.pem" ]]; then
+            CERT_DIR="/etc/letsencrypt/live/$_cand"
+            break
+        fi
+    done
+
+    if [[ -n "$CERT_DIR" ]]; then
+        CERT_FULL="$CERT_DIR/fullchain.pem"
+        CERT_KEY="$CERT_DIR/privkey.pem"
         CERT_SOURCE="letsencrypt"
     elif [[ -f "/etc/ssl/$SERVICE_NAME/fullchain.pem" && -f "/etc/ssl/$SERVICE_NAME/privkey.pem" ]]; then
         CERT_FULL="/etc/ssl/$SERVICE_NAME/fullchain.pem"
@@ -1008,7 +1077,9 @@ else
 server {
     listen 80;
 $SSL_LINES
-    server_name $DOMAIN;
+    # ！裸域和 www 必须写在同一个 server 里。开两个 server 块的话，
+    #   nginx 只按先后顺序取第一个，另一个名字会落到 default_server 上。
+    server_name $SERVER_NAMES;
 
     # 皮肤上传够用了
     client_max_body_size 2m;
@@ -1166,6 +1237,14 @@ fi
 step "申请 HTTPS 证书"
 # -----------------------------------------------------------------------------
 
+# certbot 首次使用要同意条款并留邮箱（用于到期提醒）；已经有账号就什么都不用传。
+# ！必须定义在分支之前：下面「补签」和「新签」两处都要用，漏了会在 set -u 下
+#   直接 unbound variable 崩掉。
+CERT_OPTS=""
+if [[ ! -d /etc/letsencrypt/accounts ]]; then
+    CERT_OPTS="--agree-tos --email $CERT_EMAIL"
+fi
+
 if [[ $DO_HTTPS -eq 0 ]]; then
     dim "已跳过（--no-https，或 certbot 不可用）"
 elif [[ $DO_NGINX -eq 0 || ! -f "$NGINX_AVAILABLE" ]]; then
@@ -1180,7 +1259,34 @@ elif [[ "$CERT_SOURCE" == "letsencrypt" ]]; then
     #   `certbot --nginx`** —— 它会再去改一遍我们自己生成的配置文件
     #   （重复插 server 块 / 塞一堆 location），而那份文件本该由脚本独占。
     #   只需要确保证书续期之后 nginx 会被 reload。
-    ok "HTTPS 已就位：https://$DOMAIN"
+    if [[ -n "$ALT_DOMAIN" ]]; then
+        ok "HTTPS 已就位：https://$DOMAIN 与 https://$ALT_DOMAIN"
+    else
+        ok "HTTPS 已就位：https://$DOMAIN"
+    fi
+
+    # ！证书里如果只有一个名字，另一个名字打开时会报「证书不匹配」。
+    #   这种错最坑的地方在于：站点能开、只有地址栏挂把锁，用户多半不管，
+    #   而启动器这种不走浏览器的地方是**硬失败**。所以这里主动看一眼 SAN，
+    #   缺了就用 certonly 补签 —— ！必须是 certonly，不是 --nginx 安装器，
+    #   后者会往我们生成的配置里塞东西。
+    if [[ -n "$ALT_DOMAIN" ]] && command -v openssl >/dev/null 2>&1; then
+        if openssl x509 -in "$CERT_FULL" -noout -text 2>/dev/null | grep -q "DNS:$ALT_DOMAIN"; then
+            dim "证书已覆盖 $DOMAIN 与 $ALT_DOMAIN"
+        else
+            info "证书里没有 $ALT_DOMAIN，补签（--expand）"
+            if run certbot certonly --nginx -d "$DOMAIN" -d "$ALT_DOMAIN" \
+                    --cert-name "$(basename "$CERT_DIR")" --expand \
+                    --non-interactive $CERT_OPTS 2>/dev/null; then
+                ok "证书已扩展到两个域名"
+                run systemctl reload nginx 2>/dev/null || true
+            else
+                warn "补签失败：https://$ALT_DOMAIN 会报证书不匹配"
+                warn "  多半是 $ALT_DOMAIN 的 DNS 没指向这台机器。删掉这个别名也行："
+                warn "      sudo bash $0 --no-www"
+            fi
+        fi
+    fi
 
     # 证书是脚本自己挂进去的，certbot 的 nginx 插件并不知道，
     # 所以显式装一个 deploy 钩子 —— 否则 renew 成功后 nginx 还在用旧证书。
@@ -1199,19 +1305,23 @@ HOOK
 elif [[ ! -d /etc/letsencrypt/accounts && -z "$CERT_EMAIL" ]]; then
     warn "首次申请证书需要邮箱，已跳过。补上：sudo bash $0 --email 你的邮箱"
 else
-    info "向 Let’s Encrypt 申请 $DOMAIN 的证书"
-    CERT_OPTS=""
-    if [[ ! -d /etc/letsencrypt/accounts ]]; then
-        CERT_OPTS="--agree-tos --email $CERT_EMAIL"
-    fi
+    info "向 Let’s Encrypt 申请 $SERVER_NAMES 的证书"
 
     # ！证书申请失败不能算部署失败 —— 站点用 http 照样能跑。
     #   菜鸟最容易在这里放弃，其实只是 DNS 还没生效。
-    if run certbot --nginx -d "$DOMAIN" --non-interactive --redirect $CERT_OPTS; then
+    CERT_ARGS=(-d "$DOMAIN")
+    if [[ -n "$ALT_DOMAIN" ]]; then
+        CERT_ARGS+=(-d "$ALT_DOMAIN")
+    fi
+
+    if run certbot --nginx "${CERT_ARGS[@]}" --non-interactive --redirect $CERT_OPTS; then
         ok "HTTPS 已启用：https://$DOMAIN"
     else
         warn "证书申请失败，网站仍然可以用 http://$DOMAIN 访问"
         warn "多半是：DNS 还没解析到这台机器，或者云安全组没放行 80"
+        if [[ -n "$ALT_DOMAIN" ]]; then
+            warn "也可能只是 $ALT_DOMAIN 没有 A 记录 —— 去掉它改用：--no-www"
+        fi
         warn "处理好之后重跑一次本脚本即可"
     fi
 fi
@@ -1250,21 +1360,39 @@ else
         warn "      grep -rl '$DOMAIN' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null"
     fi
 
+    # ！www 和裸域是 server_name 里两个独立的名字，只验一个是不够的：
+    #   很可能裸域通了、www 落到了别的 server 块上，用户拿 www 打开就是 404。
+    if [[ -n "$ALT_DOMAIN" ]]; then
+        ALT_HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 8 \
+            -H "Host: $ALT_DOMAIN" "http://127.0.0.1/api/meta" 2>/dev/null || true)"
+        if [[ "$ALT_HTTP_CODE" == "200" ]]; then
+            ok "nginx 反代正常（http://$ALT_DOMAIN）"
+        else
+            warn "！http://$ALT_DOMAIN 没拿到 200（实际「${ALT_HTTP_CODE:-无响应}」）"
+            warn "  先确认 $ALT_DOMAIN 的 A 记录也指向这台机器；"
+            warn "  不想服务这个别名就加 --no-www。"
+        fi
+    fi
+
     # 443 到底有没有进程在听。这是「昨天还能用 https，今天打不开」的头号原因。
     if ss -lnt 2>/dev/null | grep -qE '[:.]443[[:space:]]'; then
         LISTEN_443=1
     fi
 
-    if [[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
+    if [[ -n "$CERT_FULL" ]]; then
         if [[ $LISTEN_443 -eq 1 ]]; then
-            HTTPS_CODE="$(curl -ks -o /dev/null -w '%{http_code}' -m 8 \
-                --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/meta" 2>/dev/null || true)"
-            if [[ "$HTTPS_CODE" == "200" ]]; then
-                NGINX_HTTPS_OK=1
-                ok "https 正常：https://$DOMAIN"
-            else
-                warn "！443 在监听，但没返回 200（实际「${HTTPS_CODE:-无响应}」）"
-            fi
+            NGINX_HTTPS_OK=1
+            for _name in "$DOMAIN" "$ALT_DOMAIN"; do
+                [[ -n "$_name" ]] || continue
+                HTTPS_CODE="$(curl -ks -o /dev/null -w '%{http_code}' -m 8 \
+                    --resolve "$_name:443:127.0.0.1" "https://$_name/api/meta" 2>/dev/null || true)"
+                if [[ "$HTTPS_CODE" == "200" ]]; then
+                    ok "https 正常：https://$_name"
+                else
+                    NGINX_HTTPS_OK=0
+                    warn "！https://$_name 没返回 200（实际「${HTTPS_CODE:-无响应}」）"
+                fi
+            done
         else
             warn "！证书文件在，但没有任何进程监听 443 —— https 必然打不开。"
             warn "  说明证书没挂到 nginx 上。修："
@@ -1465,7 +1593,11 @@ fi
 # ！这里以前只看证书文件在不在，于是会出现「脚本让你访问 https，
 #   可 443 上根本没有进程在听」的误导。改成看实际验证结果。
 if [[ $NGINX_HTTPS_OK -eq 1 ]]; then
-    printf '    访问      https://%s\n\n' "$DOMAIN"
+    if [[ -n "$ALT_DOMAIN" ]]; then
+        printf '    访问      https://%s\n              https://%s\n\n' "$DOMAIN" "$ALT_DOMAIN"
+    else
+        printf '    访问      https://%s\n\n' "$DOMAIN"
+    fi
 elif [[ $DO_NGINX -eq 1 && "$NGINX_HTTP_CODE" != "200" ]]; then
     printf '    访问      （nginx 这一层没通，看上面 [14/15] 的提示）\n\n'
 else

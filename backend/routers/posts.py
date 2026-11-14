@@ -222,6 +222,7 @@ def create_post(
         title=payload.title,
         blocks=payload.blocks,
         credits=payload.credits,
+        circle_id=payload.circle_id,
     )
 
 

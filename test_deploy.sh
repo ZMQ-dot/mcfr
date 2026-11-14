@@ -95,7 +95,9 @@ SERVICE_FILE="$WORK/mcfr.service"
 NGINX_AVAILABLE="$WORK/nginx-site.conf"
 APP_PORT=""; DOMAIN=""
 check "detect_port 无配置时用默认" "8000" "$(detect_port)"
-check "detect_domain 无配置时用默认" "pccode.cn" "$(detect_domain)"
+# ！这里的期望值必须跟着 deploy.sh 的 DEFAULT_DOMAIN 走。
+#   新域名 mcfr.cn 已备案（豫ICP备2026015409号-2），v0.32.2 起是默认值。
+check "detect_domain 无配置时用默认" "mcfr.cn" "$(detect_domain)"
 
 printf 'ExecStart=/x/venv/bin/python run.py --host 127.0.0.1 --port 9123\n' > "$SERVICE_FILE"
 printf 'server {\n    server_name example.org;\n}\n' > "$NGINX_AVAILABLE"
