@@ -106,57 +106,22 @@
 }
 
 /* =========================================================================
-   2 · 物品栏选框 —— 导航当前项的四角框
+   2 · 侧栏当前项（v0.39）
    -------------------------------------------------------------------------
-   MC 选中某个快捷栏格子时，只画四个角上的 L 形折角，而不是一个完整矩形。
-   原件不必动 DOM：用一个绝对定位的 ::after，往上铺 8 条 1px 的渐变矩形，
-   两两一组拼成四个角。
+   这里原来是「物品栏选框」：顺着 MC 选中快捷栏格子时画的四个 L 形折角，
+   用 8 条 1px 渐变拼出来。那一版配的是深色、直角、硬边的侧栏，
+   折角和方块感是一路的。
 
-   这里**刻意没用 mask**：早先用「4 个 7×7 的 mask 层 + mask-position 四角」
-   的写法，实测在窄尺寸下顶边与底边会被整条画满（左右两侧才被切成角），
-   行为随元素尺寸而变。8 条 background 渐变是像素级确定的，没有这种歧义。
+   v0.39 的侧栏变成了没有边框的软胶囊（底色 + 左侧短条），
+   四角折角就变成了四个飘在行内边缘的小钩子 —— 它既不再是「选框」，
+   也跟圆角打架。所以整块删掉，当前项只由底色和左侧短条表示。
 
-   内缩 2px 是为了不和 .nav-item 自身的 6px 圆角打架 —— 折角贴着圆角走会外溢。
-   原有左侧那道虹彩竖条保留，颜色语义仍由它承担。
+   ！别把这段恢复回来：折角内缩 2px 是为了迁就 6px 圆角，
+     而现在行的圆角就是 6px、底色是柔和的绿雾，折角会正好压在圆角上。
    ========================================================================= */
 
-.nav-item[aria-current="true"] {
-  border-color: transparent;
-  /* 高亮底现在由侧栏那块会滑动的指示器承担（.sidenav.is-tabbar::before）：
-     一个是「滑过去」，一个是「跳到这儿」，两件事分工明确 */
-  background-color: transparent;
-}
-
-/* 侧栏的指示器用主色的淡底（与 .nav-item[aria-current] 一致） */
+/* 侧栏那块会滑动的选中底用主色的淡绿（与 .nav-item 的语义色一致） */
 .sidenav.is-tabbar { --tab-bg: var(--grass-veil-2); }
-
-.nav-item[aria-current="true"]::after {
-  --corner-len: 7px;
-  --corner-w: 1px;
-  --corner-c: var(--line-iris);
-
-  content: "";
-  position: absolute;
-  inset: 2px;
-  pointer-events: none;
-  background-image:
-    linear-gradient(var(--corner-c), var(--corner-c)), linear-gradient(var(--corner-c), var(--corner-c)),
-    linear-gradient(var(--corner-c), var(--corner-c)), linear-gradient(var(--corner-c), var(--corner-c)),
-    linear-gradient(var(--corner-c), var(--corner-c)), linear-gradient(var(--corner-c), var(--corner-c)),
-    linear-gradient(var(--corner-c), var(--corner-c)), linear-gradient(var(--corner-c), var(--corner-c));
-  /* 每角两条：一条横、一条竖 */
-  background-size:
-    var(--corner-len) var(--corner-w), var(--corner-w) var(--corner-len),
-    var(--corner-len) var(--corner-w), var(--corner-w) var(--corner-len),
-    var(--corner-len) var(--corner-w), var(--corner-w) var(--corner-len),
-    var(--corner-len) var(--corner-w), var(--corner-w) var(--corner-len);
-  background-position:
-    left top, left top,
-    right top, right top,
-    left bottom, left bottom,
-    right bottom, right bottom;
-  background-repeat: no-repeat;
-}
 
 /* =========================================================================
    3 · 物品格 —— MC 背包里那种内凹的方格子
@@ -180,7 +145,7 @@
 }
 
 .slot--sm { width: 34px; height: 34px; }
-.slot--xl { width: 104px; height: 104px; border-radius: 0; }
+.slot--xl { width: 104px; height: 104px; border-radius: 6px; }
 
 /* 格子里的物件不要贴着边 */
 .slot > .mcface,

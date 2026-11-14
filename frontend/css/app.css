@@ -15,14 +15,13 @@
   place-items: center;
   width: 52px;
   height: 52px;
-  /* v0.38：直角。头像本来就是一张方块脸，
-     圆角一上去就变成了「社交 App 的圆形头像」。 */
-  border-radius: 0;
+  /* 3px 的小圆角：仍然是方块脸（不能做成圆形头像），
+     但边缘不再是刀切的 —— 整页都是柔和的前提下，0 会显得扎手。 */
+  border-radius: 3px;
   /* 亮度走 --face-l：头像内部的格子是 JS 用固定 hsl 画上去的，
      换主题时只能微调这一档，改狠了格子就糊在底色上。 */
   background: hsl(var(--hue) 34% var(--face-l));
-  border: 1px solid var(--tint-3);
-  box-shadow: inset 1px 1px 0 var(--bevel-hi);
+  border: 1px solid var(--line-strong);
   overflow: hidden;
 }
 
@@ -50,9 +49,9 @@
 
 /* 三档尺寸都保持直角。xl 是玩家卡左列那块「照片」，
    104px 正好是 8 的 13 倍 —— 像素脸的格子落在整数边界上，不会被插值糊掉。 */
-.mcface--sm { width: 36px; height: 36px; border-radius: 0; }
-.mcface--lg { width: 76px; height: 76px; border-radius: 0; }
-.mcface--xl { width: 104px; height: 104px; border-radius: 0; }
+.mcface--sm { width: 36px; height: 36px; border-radius: 3px; }
+.mcface--lg { width: 76px; height: 76px; border-radius: 4px; }
+.mcface--xl { width: 104px; height: 104px; border-radius: 6px; }
 
 /* 用户上传的自定义头像：铺满整个方块 */
 .mcface-img {
@@ -138,7 +137,7 @@
   flex: none;
   width: 8px;
   height: 8px;
-  border-radius: 0;
+  border-radius: 50%;
   background: var(--dim);
 }
 .presence--on { background: var(--ok); }
@@ -146,7 +145,7 @@
   content: "";
   position: absolute;
   inset: -3px;
-  border-radius: 0;
+  border-radius: 50%;
   border: 1px solid var(--ok);
   animation: pulse-ring 2.4s var(--ease-out) infinite;
 }
@@ -324,7 +323,7 @@
   gap: 1rem;
   padding: .72rem clamp(1rem, 3vw, 2.2rem);
   background: var(--panel);
-  border-bottom: 2px solid var(--line-strong);
+  border-bottom: 1px solid var(--line);
 }
 
 .topbar-brand { display: flex; align-items: center; gap: .55rem; min-width: 0; }
@@ -358,7 +357,7 @@
 .me-chip .mcface {
   width: 32px;
   height: 32px;
-  border-radius: 0;
+  border-radius: 3px;
 }
 
 .shell {
@@ -381,18 +380,18 @@
 }
 
 /* =========================================================================
-   侧栏：游戏内的 Tab 条（v0.38）
+   侧栏：一行一行的导航（v0.39）
    -------------------------------------------------------------------------
-   原来是「图标 + 文字 + 圆角高亮块」，那是所有后台模板的样子。
-   现在的做法是把它当成 Minecraft 物品栏上方的那排页签：
+   v0.38 把它做成了游戏内的 Tab 条（2px 实心描边 + 硬投影 + 按下位移）。
+   那一版有性格，但一屏八个方框压在一起，看起来像一堆按钮，很吵。
+   现在退回最安静的做法，也就是后台面板常见的排法：
 
-     · 每一格就是一块**板**：2px 实心描边、硬投影、直角
-     · 左上亮 / 右下暗的内阴影给一层厚度，看起来是贴上去的而不是画上去的
-     · 选中的那一格**按进去**：整体挪 2px、投影消失、内阴影反过来 ——
-       所以「当前在哪一页」不需要一条彩色横线来提示，它是物理上的
+     · 没有边框，只有 6px 圆角的悬停底色 —— 不点它的时候它不存在
+     · 选中那一行是柔和的绿底 + 左侧 3px 的胶囊条（不是硬贴边）
+     · 文字 500 字重、不加大字距，读起来不累
 
-   ！图标去掉了。侧栏的文字本身已经说清楚了去处，加一枚线条图标只是
-     在重复一遍；而那种「统一图标 + 统一字号」的排法正是通用后台的味道。
+   ！图标仍然不加（v0.38 的决定保留）：文字已经说清去处，
+     再加一排统一粗细的线条图标反而更模板。
    ========================================================================= */
 
 .nav-item {
@@ -401,65 +400,57 @@
   align-items: center;
   gap: .5rem;
   width: 100%;
-  padding: .52rem .7rem .52rem .95rem;
+  padding: .5rem .7rem .5rem .9rem;
   font-family: inherit;
   font-size: .875rem;
-  font-weight: 600;
-  letter-spacing: .04em;
+  font-weight: 500;
+  letter-spacing: 0;
   color: var(--muted);
   text-align: left;
-  background: var(--panel);
-  border: 2px solid var(--edge);
-  border-radius: 0;
-  box-shadow: inset 1px 1px 0 var(--bevel-hi), 3px 3px 0 var(--slab);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
   cursor: pointer;
-  transition: color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
-              border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease),
-              transform var(--dur-1) var(--ease);
+  transition: color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
 }
-.nav-item:hover {
-  color: var(--text);
-  background: var(--tint-1);
-  border-color: var(--edge);
-}
-.nav-item:active { transform: translate(2px, 2px); box-shadow: none; }
+.nav-item:hover { color: var(--text); background: var(--tint-1); }
+.nav-item:active { background: var(--tint-2); }
 
-/* 选中：按进去的那一格 */
+/* 选中：左侧一条圆头短条 + 字重变粗。
+   ！底色**不写在这里**：那块高亮底由 .is-tabbar::before 的滑动指示器来画
+     （见 aether.css「会滑动的选中指示器」），所以按钮自己必须保持透明 ——
+     两边都上色的话，指示器滑过去的时候会有两层底叠在一起。
+   ！也不要用「整行绿底 + 白字」：那在深色主题下会跳出来，反而刺眼。 */
 .nav-item[aria-current="true"] {
-  color: var(--grass-ink);
-  background: var(--grass-veil-2);
-  border-color: var(--grass);
-  transform: translate(2px, 2px);
-  box-shadow: inset 1px 1px 0 var(--bevel-lo), inset -1px -1px 0 var(--bevel-hi);
+  color: var(--text);
+  font-weight: 600;
 }
-/* 左侧那根 4px 的方块条：像物品栏里「这一格有东西」的标记。
-   只在选中时出现，且贴着描边内缘 —— 不占布局，也不是一条渐变发丝线。 */
 .nav-item[aria-current="true"]::before {
   content: "";
   position: absolute;
-  left: -2px;
-  top: -2px;
-  bottom: -2px;
-  width: 4px;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 1.05rem;
+  margin-top: -.525rem;
+  border-radius: 999px;
   background: var(--grass);
 }
 .nav-item .count { margin-left: auto; }
 
-/* 侧栏顶上的「菜单」标签：一小块硬牌，不是那种居中的小写字母眉标 */
+/* 侧栏顶上的「菜单」标签：一行小字，不做成牌子 */
 .nav-eyebrow {
-  margin: 0 0 .55rem;
-  padding: .26rem .5rem;
+  margin: 0 0 .45rem;
+  padding: 0 .7rem;
   font-size: .625rem;
-  letter-spacing: .28em;
+  letter-spacing: .22em;
   color: var(--dim);
-  background: var(--tint-1);
-  border-left: 4px solid var(--line-strong);
 }
 
 .nav-foot {
   margin-top: 1.1rem;
   padding-top: 1rem;
-  border-top: 2px solid var(--edge);
+  border-top: 1px solid var(--line);
   display: grid;
   gap: .45rem;
 }
@@ -484,7 +475,7 @@
   width: 8px;
   height: 8px;
   /* 方灯，不是圆点：全站已经没有圆形了，留一颗圆点反而是那唯一一处「通用后台」 */
-  border-radius: 0;
+  border-radius: 50%;
   background: var(--muted);
   /* transition：从「正在连接…」变绿时不要硬切，那一下最容易被看见 */
   transition: background-color .5s var(--ease);
@@ -494,7 +485,7 @@
   content: "";
   position: absolute;
   inset: -3px;
-  border-radius: 0;
+  border-radius: 50%;
   background: currentColor;
   opacity: 0;
 }
@@ -535,10 +526,9 @@
   justify-content: space-between;
   gap: 1.2rem;
   flex-wrap: wrap;
-  padding: 0 0 1rem 1rem;
-  margin-bottom: 1.25rem;
-  border-left: 4px solid var(--grass);
-  border-bottom: 2px solid var(--edge);
+  padding: 0 0 1rem;
+  margin-bottom: 1.15rem;
+  border-bottom: 1px solid var(--line);
 }
 .view-head .titles { display: grid; gap: .3rem; }
 
@@ -607,16 +597,16 @@
   gap: .65rem;
   padding: .1rem .8rem;
   background: var(--panel);
-  border: 2px solid var(--edge);
-  border-radius: 0;
-  box-shadow: 3px 3px 0 var(--slab);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
   transition: border-color var(--dur-1) var(--ease),
               box-shadow var(--dur-1) var(--ease);
 }
-/* 焦点环画在整个槽上，不是画在 input 上 —— 否则那圈线会缩在文字中间 */
+/* 焦点环画在整个槽上，不是画在 input 上 —— 否则那圈线会缩在文字中间。
+   用一圈半透明的绿雾而不是实心描边：实心那圈太硬，输入时一直在闪。 */
 .search-field:focus-within {
-  border-color: var(--grass);
-  box-shadow: 3px 3px 0 var(--slab), inset 0 0 0 1px var(--grass);
+  border-color: var(--grass-line);
+  box-shadow: 0 0 0 3px var(--grass-veil-2);
 }
 
 .search-icon {
@@ -866,21 +856,20 @@
      简写会把上面那层颗粒一起重置掉，卡片就悄悄变回纯色了。 */
   background-color: var(--panel);
   background-image: var(--noise);
-  border: 2px solid var(--edge);
-  /* 直角。方块切出来的边就是 90°，这里的 0 不是「忘了设置」 */
-  border-radius: 0;
-  /* 第一层是顶部内高光：深色主题下纯黑投影看不见，靠这条 1px 的亮边
-     告诉眼睛「这块板是浮起来的一层」。 */
-  box-shadow: inset 1px 1px 0 var(--bevel-hi), 4px 4px 0 var(--slab);
+  /* v0.39：10px 圆角 + 1px 细描边 + 几乎看不见的一层投影。
+     卡片靠「比页面亮一档」站起来，不靠加粗的边框和硬投影。 */
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
   transition: transform var(--dur-2) var(--ease-out), border-color var(--dur-2) var(--ease-out),
               box-shadow var(--dur-2) var(--ease-out);
 }
-/* 悬停时整块**抬起来** 1px，投影跟着长到 4px。
-   往左上抬、投影在右下 —— 方向必须一致，否则看起来像两件事同时发生。 */
+/* 悬停：整块抬 1px，投影从「几乎看不见」长到「看得出」，描边微微变绿。
+   幅度都很小 —— 一屏十几张卡，动得大了就是一排在跳。 */
 .peer-card:hover {
-  transform: translate(-1px, -1px);
-  border-color: var(--grass-line);
-  box-shadow: inset 1px 1px 0 var(--bevel-hi), 5px 5px 0 var(--slab);
+  transform: translateY(-1px);
+  border-color: var(--line-iris);
+  box-shadow: var(--shadow-lift);
 }
 
 /* 左列：头像 + 等级 + 在线灯。用竖线把它和正文切开，像名册上的照片栏。 */
@@ -891,7 +880,7 @@
   gap: .38rem;
   min-width: 112px;
   padding-right: 1rem;
-  border-right: 2px solid var(--line);
+  border-right: 1px solid var(--line);
 }
 
 /* 等级牌。像素字体只出现在这个数字上（中文字形它没有，别拿它排句子）。 */
@@ -903,7 +892,9 @@
   letter-spacing: .04em;
   color: var(--muted);
   background: var(--tint-1);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: .18rem .4rem;
 }
 .peer-lv b { color: var(--text); font-weight: 400; }
 
@@ -929,6 +920,7 @@
   content: "";
   width: 7px;
   height: 7px;
+  border-radius: 50%;
   background: var(--dim);
 }
 .peer-state--on { color: var(--grass-ink); }
@@ -1381,7 +1373,7 @@
   left: 2px;
   width: 18px;
   height: 18px;
-  border-radius: 0;
+  border-radius: 999px;
   /* 白圆钮。与 .mcface::after 同理：它照的是开关自己的轨道，
      不是页面背景，所以两种主题下都保持白色。 */
   background: #fff;
@@ -1447,7 +1439,7 @@
   width: 14px;
   height: 14px;
   margin: -7px 0 0 -7px;
-  border-radius: 0;
+  border-radius: 50%;
   pointer-events: none;
   z-index: 200;
   border: 1px solid rgba(107, 168, 79, .9);
@@ -1508,7 +1500,7 @@
 @media (max-width: 640px) {
   /* 小屏只留图标，免得挡住内容 */
   .feedback-fab__text { display: none; }
-.feedback-fab { padding: .55rem; border-radius: 0; }
+.feedback-fab { padding: .55rem; border-radius: 999px; }
   .feedback-fab__icon { font-size: 1rem; }
 }
 
@@ -1539,7 +1531,7 @@
   height: 20px;
   font-style: normal;
   font-size: .688rem;
-  border-radius: 0;
+  border-radius: 50%;
   border: 1px solid var(--line-strong);
   transition: background var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease),
               color var(--dur-2) var(--ease);
@@ -1581,17 +1573,13 @@
     gap: .3rem;
     padding: 0 0 1rem;
     overflow-x: auto;
-    border-bottom: 2px solid var(--edge);
+    border-bottom: 1px solid var(--line);
     margin-bottom: 1.1rem;
   }
-  /* 横向条里每一格还是一枚页签，但「按进去 2px」横着排时看不出来 ——
-     所以窄屏改用一条 3px 的绿底边标当前页。 */
-  .nav-item { width: auto; flex: none; padding: .5rem .8rem; }
+  /* 横向条里每一格是一枚软胶囊：选中只有底色和字重，没有竖条
+     （横排时左侧那条竖线会变成一行里突兀的一小截）。 */
+  .nav-item { width: auto; flex: none; padding: .5rem .8rem; border-radius: 999px; }
   .nav-eyebrow { display: none; }
-  .nav-item[aria-current="true"] {
-    transform: none;
-    box-shadow: inset 0 -3px 0 0 var(--grass), inset 1px 1px 0 var(--bevel-lo);
-  }
   .nav-item[aria-current="true"]::before { display: none; }
   .nav-foot { display: none; }
   .view { padding-top: 1.2rem; }
@@ -1642,18 +1630,18 @@
   background-image: var(--noise);
   /* v0.38：2px 硬描边 + 直角 + 3px 硬投影。和玩家卡、圈子卡同一套厚度，
      全站所有的「一块东西」长得一样，页面才不会显得东拼西凑。 */
-  border: 2px solid var(--edge);
-  border-radius: 0;
-  box-shadow: inset 1px 1px 0 var(--bevel-hi), 4px 4px 0 var(--slab);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
   transition: transform var(--dur-2) var(--ease-out),
               border-color var(--dur-2) var(--ease-out),
               box-shadow var(--dur-2) var(--ease-out);
 }
 .post-card:hover,
 .post-card:focus-within {
-  transform: translate(-1px, -1px);
-  border-color: var(--grass-line);
-  box-shadow: inset 1px 1px 0 var(--bevel-hi), 5px 5px 0 var(--slab);
+  transform: translateY(-1px);
+  border-color: var(--line-iris);
+  box-shadow: var(--shadow-lift);
 }
 
 /* 整卡可点的那层透明按钮。
@@ -1724,7 +1712,7 @@
      四个角离弧线只剩 1.1px —— 看起来就是「头像把标签撑破了」。
    收小到 18px、圆角加大到 6px、再把左侧内边距放宽一点，
    让它明确待在弧线里（余量约 3px）。 */
-.maker .mcface { width: 18px; height: 18px; border-radius: 0; }
+.maker .mcface { width: 18px; height: 18px; border-radius: 2px; }
 .maker .mcface-grid { width: 76%; height: 76%; }
 .maker__name { font-weight: 600; color: var(--text); }
 .maker__role {
@@ -1808,7 +1796,7 @@ h3.rt-h { font-size: 1.1rem; }
   color: var(--text-soft);
   background: var(--tint-1);
   border-left: 3px solid var(--grass);
-  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
 }
 
 .rt-list { margin: 0 0 1.1rem; padding-left: 1.5rem; }
@@ -1921,7 +1909,7 @@ a.rt-file:hover { border-color: var(--line-iris); background: var(--tint-2); }
 
 .comment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .9rem; }
 .comment { display: flex; gap: .7rem; }
-.comment .mcface { width: 32px; height: 32px; border-radius: 0; }
+.comment .mcface { width: 32px; height: 32px; border-radius: 3px; }
 .comment__body { flex: 1 1 auto; min-width: 0; }
 .comment__head {
   display: flex;
@@ -2098,7 +2086,7 @@ a.rt-file:hover { border-color: var(--line-iris); background: var(--tint-2); }
   background: var(--cloud);
   border: 1px solid var(--line-strong);
   border-top: 0;
-  border-radius: 0 0 var(--r-sm) var(--r-sm);
+  border-radius: 0 0 var(--r-md) var(--r-md);
   outline: none;
   overflow-wrap: anywhere;
 }
@@ -2147,7 +2135,7 @@ a.rt-file:hover { border-color: var(--line-iris); background: var(--tint-2); }
   color: #fff;
   background: rgba(0, 0, 0, .55);
   border: 0;
-  border-radius: 0;
+  border-radius: var(--r-sm);
   cursor: pointer;
   opacity: 0;
   transition: opacity var(--dur-1) var(--ease);
@@ -2209,7 +2197,7 @@ a.rt-file:hover { border-color: var(--line-iris); background: var(--tint-2); }
   color: var(--dim);
   background: none;
   border: 0;
-  border-radius: 0;
+  border-radius: 50%;
   cursor: pointer;
 }
 .credit-chip__x:hover { color: var(--redstone); background: var(--red-veil-1); }
@@ -2280,12 +2268,12 @@ a.rt-file:hover { border-color: var(--line-iris); background: var(--tint-2); }
 }
 /* 未读用左边一道草绿，而不是整块变色：
    整块变色会让「读过的」显得像坏了，而实际上它才是常态。 */
-.inbox-item--unread { border-left: 2px solid var(--grass); }
+.inbox-item--unread { border-left: 3px solid var(--grass); }
 [data-act="inbox-open"] { cursor: pointer; }
 [data-act="inbox-open"]:hover { border-color: var(--line-iris); background: var(--tint-1); }
 [data-act="inbox-open"]:focus-visible { outline: 2px solid var(--diamond); outline-offset: 2px; }
 
-.inbox-item .mcface { width: 34px; height: 34px; border-radius: 0; }
+.inbox-item .mcface { width: 34px; height: 34px; border-radius: 3px; }
 .inbox__sys {
   display: grid;
   place-items: center;
@@ -2312,7 +2300,7 @@ a.rt-file:hover { border-color: var(--line-iris); background: var(--tint-2); }
   align-self: center;
   width: 8px;
   height: 8px;
-  border-radius: 0;
+  border-radius: 50%;
   background: var(--grass);
 }
 
@@ -2346,18 +2334,18 @@ a.rt-file:hover { border-color: var(--line-iris); background: var(--tint-2); }
   padding: 1rem 1.1rem;
   background-color: var(--panel);
   background-image: var(--noise);
-  border: 2px solid var(--edge);
-  border-radius: 0;
-  box-shadow: inset 1px 1px 0 var(--bevel-hi), 4px 4px 0 var(--slab);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
   transition: transform var(--dur-2) var(--ease-out),
               border-color var(--dur-2) var(--ease-out),
               box-shadow var(--dur-2) var(--ease-out);
 }
 .circle-card:hover,
 .circle-card:focus-within {
-  transform: translate(-1px, -1px);
-  border-color: var(--grass-line);
-  box-shadow: inset 1px 1px 0 var(--bevel-hi), 5px 5px 0 var(--slab);
+  transform: translateY(-1px);
+  border-color: var(--line-iris);
+  box-shadow: var(--shadow-lift);
 }
 
 /* 整卡可点的透明层。和 .post-card__open 同一个做法、同一个理由：
